@@ -8,6 +8,7 @@ encoder and decoder and some other related info.
 import pickle
 from pathlib import Path
 
+import numpy as np
 import requests
 
 input_file_path = Path(__file__).parent / "input.txt"
@@ -51,7 +52,8 @@ print(f"train has {len(train_ids):,} tokens")
 print(f"val has {len(val_ids):,} tokens")
 
 current_dir = Path(__file__).parent
-
+train_ids = np.array(train_ids, dtype=np.uint16)
+val_ids = np.array(val_ids, dtype=np.uint16)
 train_ids.tofile(current_dir / "train.bin")
 val_ids.tofile(current_dir / "val.bin")
 
