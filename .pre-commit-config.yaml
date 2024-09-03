@@ -24,21 +24,13 @@ repos:
         stages: [pre-commit, pre-push]
       - id: ruff-format
         types_or: [python, pyi, jupyter]
-    # all the stuff after this comment is slow, so it is ran only on pushes
-  - repo: local
+  - repo: local # python typecheck, on push only
     hooks:
-      # it is important to run this hook before pyright, to sync the venv
-      - id: python-deps
-        name: Install python deps
+      - id: pyright
+        name: Pyright
         stages: [pre-push]
-        types: [python, pyi, jupyter]
-        entry: uv sync
+        types_or: [python, pyi, jupyter]
+        entry: sh -c 'uv sync && uv tool install pyright && pyright'
         language: system
         pass_filenames: false
         always_run: true
-  - repo: https://github.com/RobertCraigie/pyright-python # python typecheck, on push only
-    rev: v1.1.377
-    hooks:
-      - id: pyright
-        stages: [pre-push]
-        types_or: [python, pyi, jupyter]
