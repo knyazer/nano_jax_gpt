@@ -1,0 +1,63 @@
+[project]
+name = "nano_jax_gpt"
+version = "0.0.1"
+description = "Small GPT-2 implementation using JAX and Equinox"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = ["Roman Knyazhitskiy <git@knyaz.tech>"]
+license = "MIT"
+
+dependencies = [
+    "beartype>=0.18.5",
+    "datasets>=2.21.0",
+    "equinox>=0.11.5",
+    "jax-smi>=1.0.4",
+    "jax[cuda12-pip]>=0.4.31",
+    "optax>=0.2.3",
+    "tiktoken>=0.7.0",
+    "wandb>=0.17.8",
+]
+
+[tool.pyright] # this is bad, but fast, and I'm lazy
+venvpath = "."
+venv = ".venv"
+
+# The rule of thumb to using ruff: use as much stuff as possible,
+# with priority towards lower diffs, and sensibility.
+# The policy is "opt out if the rule is dumb".
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+fixable = ["ALL"]
+unfixable = ["F401"]
+select = ["F", "E", "W", "C90", "I", "N", "UP", "YTT", "ASYNC",
+    "ASYNC1", "S", "FBT", "B", "A", "COM", "C4", "DTZ",
+    "T10", "DJ", "EM", "EXE", "FA", "ISC", "ICN", "LOG", "G", "INP",
+    "PIE", "T20", "PYI", "PT", "Q", "RSE", "RET", "SLF", "SLOT", "SIM",
+    "TID", "INT", "ARG", "PTH", "FIX", "ERA", "PD",
+    "PL", "C", "R", "TRY", "FLY", "NPY", "AIR", "RUF"]
+ignore = [
+	"PYI041", # contradicts adequate typing conventions (beartype compat)
+	"COM812", # I dislike end commas forcing since it forces multiline which is ugly imo
+	"INP001", # allow namespace packages
+	"S101", # allow asserts (tests and invariants)
+	"B017", # allow pytest.raises(Exception)
+	"PT011", # don't force match (allow broad exceptions)
+	"RET504", # allow returning variables that you just assigned, better readability
+	"FA102", # from __future__ import annotations is useless, py3.10+
+	"PD008", # jax incompatible
+	"F821", # jaxtyping incompatible, hope for pyright
+	"F722", # also jaxtyping incompatible
+	"B023", # jax incompatible-ish
+	"PLR2004", # magic values are bad, but necessary in ML
+	"FIX002", # allow fixme/todos
+	"TRY003", # allow to specify long message in excepts
+	"PLR0913", # machine learning needs lots of arguments
+	"EM101", # string literals for exceptions are alright
+	"T100", # allow breakpoints
+	"T201", # allow print statements
+]
+
+[tool.ruff.lint.pep8-naming]
+extend-ignore-names = ["X"]
