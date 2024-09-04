@@ -21,6 +21,7 @@ class Block(eqx.Module):
     lnorm_mlp: eqx.nn.RMSNorm
     attn: eqx.nn.MultiheadAttention
     rope: eqx.nn.RotaryPositionalEmbedding
+    dropout: eqx.nn.Dropout
 
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3 = jr.split(key, 3)
@@ -28,8 +29,11 @@ class Block(eqx.Module):
         self.proj_fc = eqx.nn.Linear(config.n_embed * 4, config.n_embed, use_bias=False, key=k2)
         self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
-        self.attn = eqx.nn.MultiheadAttention(config.n_head, config.n_embed, key=k3)
+        self.attn = eqx.nn.MultiheadAttention(
+            config.n_head, config.n_embed, dropout_p=config.dropout, key=k3
+        )
         self.rope = eqx.nn.RotaryPositionalEmbedding(config.n_embed, 10_000)
+        self.dropout = eqx.nn.Dropout(config.dropout)
 
     def __call__(
         self, x: Float[Array, "ctx emb"], key: PRNGKeyArray | None = None
@@ -42,9 +46,11 @@ class Block(eqx.Module):
             mask=jnp.tril(jnp.ones((x.shape[0], x.shape[0]))),
             key=key,
         )
-        x = x + eqx.filter_vmap(
-            lambda tok: self.lnorm_mlp(self.proj_fc(jax.nn.gelu(self.expand_fc(tok))))
-        )(x)
+        x = x + self.dropout(
+            eqx.filter_vmap(
+                lambda tok: self.lnorm_mlp(self.proj_fc(jax.nn.gelu(self.expand_fc(tok))))
+            )(x)
+        )
         return x
 
 
@@ -86,14 +92,19 @@ class GPT(eqx.Module):
             loss = None
         return logits, loss
 
-    def generate(self, idx, key, max_new_tokens=30):
-        for _ in range(max_new_tokens):
-            # if the sequence context is growing too long we must crop it at block_size
-            idx_cond = (
-                idx if idx.size <= self.config.context_len else idx[-self.config.context_len :]
-            )
-            logits, _ = self(idx_cond)
-            idx_next = jr.categorical(logits=logits, key=key)
-            idx = jnp.concat((idx, idx_next[None, ...]))
+    def generate(self, idx, key, max_new_tokens=100):
+        forward = eqx.nn.inference_mode(self)
 
-        return idx
+        def scan_fn(carry, _):
+            idx, key = carry
+            key, subkey = jax.random.split(key)
+
+            logits, _ = forward(idx)
+            idx_next = jr.categorical(logits=logits, key=subkey)
+
+            idx = jnp.roll(idx, -1)
+            idx = idx.at[-1].set(idx_next)
+            return (idx, key), idx_next
+
+        _, new_stuff = jax.lax.scan(scan_fn, (idx, key), None, length=max_new_tokens)
+        return jnp.concat((idx.ravel(), new_stuff.ravel()))

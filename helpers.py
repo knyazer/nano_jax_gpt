@@ -30,7 +30,7 @@ Running a single step of training...
                 break
             # we try to avoid rematerialization (perf reasons), so no overshooting allowed
             new_batch_size = int(batch_size * (available_memory * 0.97 / peak_memory))
-            if new_batch_size == batch_size:
+            if new_batch_size <= batch_size:
                 break
             batch_size = new_batch_size
             print(f"\033[34m\nNew batch size: {batch_size}\n\033[0m")
