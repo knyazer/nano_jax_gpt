@@ -5,6 +5,12 @@ import jax.random as jr
 from jaxtyping import Array, Float, Int, PRNGKeyArray
 
 
+def test(x: int): ...
+
+
+test("abc")
+
+
 class GPTConfig(eqx.Module):
     context_len: int = 256
     vocab_size: int = 65
@@ -17,43 +23,49 @@ class GPTConfig(eqx.Module):
 class Block(eqx.Module):
     expand_fc: eqx.nn.Linear
     proj_fc: eqx.nn.Linear
-    lnorm_attn: eqx.nn.LayerNorm
-    lnorm_mlp: eqx.nn.LayerNorm
+    lnorm_attn: eqx.nn.RMSNorm
+    lnorm_mlp: eqx.nn.RMSNorm
     attn: eqx.nn.MultiheadAttention
+    rope: eqx.nn.RotaryPositionalEmbedding
 
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3 = jr.split(key, 3)
         self.expand_fc = eqx.nn.Linear(config.n_embed, 4 * config.n_embed, use_bias=False, key=k1)
         self.proj_fc = eqx.nn.Linear(config.n_embed * 4, config.n_embed, use_bias=False, key=k2)
-        self.lnorm_attn = eqx.nn.LayerNorm(config.n_embed, use_bias=False)
-        self.lnorm_mlp = eqx.nn.LayerNorm(config.n_embed, use_bias=False)
+        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
+        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.attn = eqx.nn.MultiheadAttention(config.n_head, config.n_embed, key=k3)
+        self.rope = eqx.nn.RotaryPositionalEmbedding(config.n_embed, 10_000)
 
     def __call__(
         self, x: Float[Array, "ctx emb"], key: PRNGKeyArray | None = None
     ) -> Float[Array, "ctx emb"]:
         x = eqx.filter_vmap(self.lnorm_attn)(x)
-        x = x + self.attn(x, x, x, mask=jnp.tril(jnp.ones((x.shape[0], x.shape[0]))), key=key)
+        x = x + self.attn(
+            query=self.rope(x),
+            key_=self.rope(x),
+            value=x,
+            mask=jnp.tril(jnp.ones((x.shape[0], x.shape[0]))),
+            key=key,
+        )
         x = x + eqx.filter_vmap(
-            lambda x: self.lnorm_mlp(self.proj_fc(jax.nn.gelu(self.expand_fc(x), approximate=True)))
+            lambda tok: self.lnorm_mlp(self.proj_fc(jax.nn.gelu(self.expand_fc(tok))))
         )(x)
         return x
 
 
 class GPT(eqx.Module):
     config: GPTConfig = eqx.field(static=True)
-    pos_embed: eqx.nn.Embedding
     tok_embed: eqx.nn.Embedding
     blocks: list[Block]
-    final_norm: eqx.nn.LayerNorm
+    final_norm: eqx.nn.RMSNorm
     lm_head: eqx.nn.Linear
 
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3, k4 = jr.split(key, 4)
-        self.pos_embed = eqx.nn.Embedding(config.context_len, config.n_embed, key=k1)
         self.tok_embed = eqx.nn.Embedding(config.vocab_size, config.n_embed, key=k2)
         self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layer)]
-        self.final_norm = eqx.nn.LayerNorm(config.n_embed, use_bias=False)
+        self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.lm_head = eqx.nn.Linear(config.n_embed, config.vocab_size, use_bias=False, key=k4)
         self.config = config
 
@@ -63,9 +75,7 @@ class GPT(eqx.Module):
         targets: Int[Array, "ctx"] | None = None,
         key: PRNGKeyArray | None = None,
     ):
-        pos_emb = eqx.filter_vmap(self.pos_embed)(jnp.arange(idx.size, dtype=jnp.int32))
-        tok_emb = eqx.filter_vmap(self.tok_embed)(idx)
-        x = tok_emb + pos_emb
+        x = eqx.filter_vmap(self.tok_embed)(idx)
         if key is None:
             key = jr.PRNGKey(0)
         keys = jr.split(key, len(self.blocks))

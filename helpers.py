@@ -15,10 +15,6 @@ Running a single step of training...
 \033[0m""")
     for _ in range(10):
         try:
-            # memory cleanup
-            for buf in jax.live_arrays():
-                buf.delete()
-
             # run a single step of training
             fn(batch_size, exit_after_first_step=True)
             time.sleep(0.5)  # wait for python gc to cleanup
@@ -42,12 +38,11 @@ Running a single step of training...
         except Exception as e:
             if "RESOURCE_EXHAUSTED" in str(e):
                 print(f"""
-        Failed due to an OOM: jax cannot resurrect after OOM usually, hence,
-        please, restart with a specified batch size lower than {batch_size}.""")
+Failed due to an OOM: jax cannot resurrect after OOM usually, hence,
+please, restart with a specified batch size lower than {batch_size}.""")
                 return
+            raise e  # noqa
 
-    print(f"\033[32mFinal batch size: {batch_size}. Starting the training...\033[0m")
+    print(f"\n\033[32mFinal batch size: {batch_size}. Starting the training...\033[0m\n")
 
-    for buf in jax.live_arrays():
-        buf.delete()
     fn(batch_size)
