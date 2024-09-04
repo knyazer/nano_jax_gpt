@@ -30,7 +30,7 @@ repos:
         name: Pyright
         stages: [pre-push]
         types_or: [python, pyi, jupyter]
-        entry: sh -c 'uv sync && uv tool install pyright && pyright'
+        entry: sh -c 'uv sync && uv tool run pyright'
         language: system
         pass_filenames: false
         always_run: true
