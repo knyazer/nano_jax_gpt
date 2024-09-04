@@ -5,12 +5,6 @@ import jax.random as jr
 from jaxtyping import Array, Float, Int, PRNGKeyArray
 
 
-def test(x: int): ...
-
-
-test("abc")
-
-
 class GPTConfig(eqx.Module):
     context_len: int = 256
     vocab_size: int = 65
