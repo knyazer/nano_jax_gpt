@@ -120,7 +120,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
     xsample = get_batches("test", key=jr.key(1), shape=(1,))[0][0]
     evals_table = []
 
-    devices = mesh_utils.create_device_mesh((8, 2))
+    devices = mesh_utils.create_device_mesh((jax.device_count(), 1))
     sharding = jshard.PositionalSharding(devices)
     replicated = sharding.replicate()
     model = eqx.filter_shard(model, replicated)
@@ -142,6 +142,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
             shape=(
                 run_config.n_updates_on_device,
                 batch_size,
+                1,
             ),
         )
 
