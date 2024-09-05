@@ -4,7 +4,9 @@ version = "0.0.1"
 description = "Small GPT-2 implementation using JAX and Equinox"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = ["Roman Knyazhitskiy <git@knyaz.tech>"]
+authors = [
+  { name = "Roman Knyazhitskiy", email = "git@knyaz.tech" }
+]
 license = "MIT"
 
 dependencies = [
