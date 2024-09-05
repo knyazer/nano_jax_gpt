@@ -54,7 +54,12 @@ run_config = RunConfig()
 if train_config.dataset_name == "shakespear-char":
     from prepare_shakespear import decode
 elif train_config.dataset_name == "openwebtext":
-    from prepare_openwebtext import decode
+    import tiktoken
+
+    enc = tiktoken.get_encoding("gpt2")
+
+    def decode(s):
+        return enc.decode(s)
 else:
     raise AssertionError("Unknown dataset")
 
