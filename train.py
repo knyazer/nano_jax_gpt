@@ -114,6 +114,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
     def save(i):
         out = eqx.filter_jit(model.generate)(idx=xsample, key=jr.key(42))
         text = decode([int(x) for x in out])
+        print(text)
         evals_table.append([text])
         wandb.log({"generation": wandb.Table(["text"], data=evals_table)}, commit=True)
 
