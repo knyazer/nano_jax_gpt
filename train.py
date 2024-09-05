@@ -169,4 +169,6 @@ if __name__ == "__main__":
             optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=1e-6
         ),
     )
-    auto_batch_size_wrapper(main, batch_size=train_config.batch_size)
+    auto_batch_size_wrapper(
+        main, batch_size=train_config.batch_size, n_devices=run_config.n_devices
+    )
