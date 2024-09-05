@@ -5,12 +5,12 @@ import jax
 import wandb
 
 
-def auto_batch_size_wrapper(fn, batch_size=0):
+def auto_batch_size_wrapper(fn, batch_size=0, n_devices=1):
     if batch_size != 0:
         fn(batch_size)
         return
 
-    batch_size = 4
+    batch_size = n_devices * 4
     print(f"""\033[34m
 Starting with a batch size of {batch_size}.
 Running a single step of training...
@@ -45,6 +45,7 @@ please, restart with a specified batch size lower than {batch_size}.""")
                 return
             raise e  # noqa
 
+    batch_size = (batch_size // n_devices) * n_devices
     print(f"\n\033[32mFinal batch size: {batch_size}. Starting the training...\033[0m\n")
 
     fn(batch_size)
