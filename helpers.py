@@ -27,6 +27,7 @@ Running a single step of training...
             reserved = memory_stats["bytes_in_use"]
             available_memory = float(memory_stats["bytes_limit"] - reserved) / n_devices
             peak_memory = float(memory_stats["peak_bytes_in_use"] - reserved)
+            print(memory_stats)
 
             if peak_memory >= available_memory * 0.90:
                 break
