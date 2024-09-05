@@ -6,8 +6,10 @@ import jax
 import jax.extend
 import jax.numpy as jnp
 import jax.random as jr
+import jax.sharding as jshard
 import numpy as np
 import optax
+from jax.experimental import mesh_utils
 from jax_smi import initialise_tracking
 from jaxtyping import Array, Float, Int, PRNGKeyArray
 from tqdm import tqdm
@@ -84,7 +86,7 @@ def loss_fn(
     y: Int[Array, "devices batch ctx"],
     key: PRNGKeyArray,
 ) -> Float[Array, ""]:
-    return eqx.filter_vmap(model)(X[0], y[0], key[0])[1].mean()
+    return eqx.filter_vmap(model)(X, y, key)[1].mean()
 
 
 def scan_fn(carry, data, model_s):
@@ -97,11 +99,18 @@ def scan_fn(carry, data, model_s):
     return (eqx.partition(model, eqx.is_array)[0], opt_state, jr.split(key)[0]), loss
 
 
-def upd_fn(model, opt_state, X, y, key):
+def upd_fn(model, opt_state, X, y, key, sharding):
+    replicated = sharding.replicate()
+    model, opt_state = eqx.filter_shard((model, opt_state), replicated)
+    X, y = eqx.filter_shard((X, y), sharding)
+
     model_d, model_s = eqx.partition(model, eqx.is_array)
     (model_d, opt_state, _), loss = eqxi.scan(
         eqx.Partial(scan_fn, model_s=model_s), (model_d, opt_state, key), (X, y), kind="lax"
     )
+
+    model, opt_state = eqx.filter_shard((model, opt_state), replicated)
+
     return eqx.combine(model_d, model_s), opt_state, loss.mean()
 
 
@@ -111,36 +120,45 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
     xsample = get_batches("test", key=jr.key(1), shape=(1,))[0][0]
     evals_table = []
 
+    devices = mesh_utils.create_device_mesh((jax.device_count(), 1))
+    sharding = jshard.PositionalSharding(devices)
+    replicated = sharding.replicate()
+    model = eqx.filter_shard(model, replicated)
+
     def save(i):
         out = eqx.filter_jit(model.generate)(idx=xsample, key=jr.key(42))
         text = decode([int(x) for x in out])
         print(text)
-        evals_table.append([text])
-        wandb.log({"generation": wandb.Table(["text"], data=evals_table)}, commit=True)
+        evals_table.append([i, text])
+        wandb.log({"text": wandb.Table(["step", "text"], data=evals_table)}, commit=True)
 
         eqx.tree_serialise_leaves(f"checkpoints/model_{i}.eqx", model)
 
     for i in (pbar := tqdm(range(train_config.train_for // run_config.n_updates_on_device))):
-        if i % (train_config.train_for // (run_config.n_updates_on_device * 20)) == 1:
-            save(i)
         data_key, fwd_key = jr.split(jr.key(i))
         X, y = get_batches(
             "train",
             data_key,
             shape=(
                 run_config.n_updates_on_device,
-                run_config.n_devices,
-                batch_size // run_config.n_devices,
+                batch_size,
             ),
         )
+
+        # step
+        X, y = eqx.filter_shard((X, y), sharding)
         model, opt_state, loss = eqx.filter_jit(upd_fn, donate="all")(
-            model, opt_state, X, y, fwd_key
+            model, opt_state, X, y, fwd_key, sharding
         )
         del X, y, fwd_key  # since donate="all" make sure to GC the vars too
+
+        # log
         pbar.set_description(f"loss: {loss.mean()}")
         if exit_after_first_step:
             return
         wandb.log({"loss": loss.mean(), "step": i})
+        if i % (train_config.train_for // (run_config.n_updates_on_device * 20)) == 1:
+            save(i)
     save(train_config.train_for // run_config.n_updates_on_device)
 
 
