@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import equinox as eqx
@@ -23,7 +24,7 @@ wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="nano_jax_gpt_tes
 
 
 class TrainConfig(eqx.Module):
-    batch_size: int = 32
+    batch_size: int = 256
     lr_config: dict = eqx.field(
         default_factory=lambda: {
             "init_value": 1e-3,
@@ -35,7 +36,7 @@ class TrainConfig(eqx.Module):
     )
     global_norm: float = 1.0
     train_for: int = 5000
-    dataset_name: str = "shakespear-char"
+    dataset_name: str = "openwebtext"
 
 
 class RunConfig(eqx.Module):
@@ -71,8 +72,8 @@ def get_batches(split: str, key: PRNGKeyArray, shape: tuple):
         shape=(int(np.prod(shape)),),
     )
 
-    x = jnp.stack([jnp.array(data[i : i + model_config.context_len]) for i in ix])
-    y = jnp.stack([jnp.array(data[i + 1 : i + 1 + model_config.context_len]) for i in ix])
+    x = np.stack([np.array(data[i : i + model_config.context_len]) for i in ix])
+    y = np.stack([np.array(data[i + 1 : i + 1 + model_config.context_len]) for i in ix])
 
     return x.reshape((*shape, model_config.context_len)), y.reshape(
         (*shape, model_config.context_len)
@@ -137,6 +138,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
 
     for i in (pbar := tqdm(range(train_config.train_for // run_config.n_updates_on_device))):
         data_key, fwd_key = jr.split(jr.key(i))
+        t = time.time()
         X, y = get_batches(
             "train",
             data_key,
@@ -145,9 +147,10 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
                 batch_size,
             ),
         )
+        print(f"loading data took {time.time() - t:.02f}s")
 
         # step
-        X, y = eqx.filter_shard((X, y), sharding)
+        X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
         model, opt_state, loss = eqx.filter_jit(upd_fn, donate="all")(
             model, opt_state, X, y, fwd_key, sharding
         )
