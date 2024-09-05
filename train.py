@@ -15,44 +15,20 @@ from jax_smi import initialise_tracking
 from jaxtyping import Array, Float, Int, PRNGKeyArray
 from tqdm import tqdm
 
+from configs import GPTConfig, RunConfig, TrainConfig
 from helpers import WandbLogger, auto_batch_size_wrapper
-from model import GPT, GPTConfig
+from model import GPT
 
 initialise_tracking()
 
 wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="nano_jax_gpt_test")
 
-
-class TrainConfig(eqx.Module):
-    batch_size: int = 256
-    lr_config: dict = eqx.field(
-        default_factory=lambda: {
-            "init_value": 1e-3,
-            "peak_value": 1e-3,
-            "warmup_steps": 100,
-            "decay_steps": 5_000,
-            "end_value": 1e-4,
-        }
-    )
-    global_norm: float = 1.0
-    train_for: int = 5000
-    dataset_name: str = "openwebtext"
-
-
-class RunConfig(eqx.Module):
-    n_devices: int = 1  # number of devices available
-    n_updates_on_device: int = 4  # how many steps to do without moving data to CPU
-
-    def __init__(self):
-        self.n_devices = jax.device_count()
-
-
-model_config = GPTConfig()
-train_config = TrainConfig()
-run_config = RunConfig()
+model_config: GPTConfig = GPTConfig.from_preset("chargpt")
+train_config: TrainConfig = TrainConfig.from_preset("chargpt")
+run_config: RunConfig = RunConfig.from_preset("chargpt")
 
 if train_config.dataset_name == "shakespear-char":
-    from prepare_shakespear import decode
+    from prepare_shakespear import decode  # type: ignore
 elif train_config.dataset_name == "openwebtext":
     import tiktoken
 
@@ -120,28 +96,40 @@ def upd_fn(model, opt_state, X, y, key, sharding):
     return eqx.combine(model_d, model_s), opt_state, loss.mean()
 
 
+def eval_scan_fn(_, data, model):
+    X, y = data
+    losses = eqx.filter_vmap(model)(X, y)[1].mean()
+    return (), losses
+
+
+def evaluate(model, X, y, sharding):
+    replicated = sharding.replicate()
+    model = eqx.filter_shard(model, replicated)
+    X, y = eqx.filter_shard((X, y), sharding)
+
+    model_d, model_s = eqx.partition(model, eqx.is_array)
+    _, losses = eqxi.scan(eqx.Partial(eval_scan_fn, model=model), (), (X, y), kind="lax")
+
+    return losses.mean()
+
+
 def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
     model = GPT(jr.key(0), model_config)
     opt_state = optim.init(eqx.filter(model, eqx.is_array))
-    xsample = get_batches("test", key=jr.key(1), shape=(1,))[0][0]
     evals_table = []
+    eval_loss = jnp.nan
 
     devices = mesh_utils.create_device_mesh((1, jax.device_count(), 1))  # reps x batch x data
     sharding = jshard.PositionalSharding(devices)
     replicated = sharding.replicate()
     model = eqx.filter_shard(model, replicated)
 
-    def save(i):
-        out = eqx.filter_jit(model.generate)(idx=xsample, key=jr.key(42))
-        text = decode([int(x) for x in out])
-        print(text)
-        evals_table.append([i, text])
-        wandb.log({"text": wandb.Table(["step", "text"], data=evals_table)}, commit=True)
-
+    def checkpoint(i):
         Path("checkpoints").mkdir(exist_ok=True)
         eqx.tree_serialise_leaves(f"checkpoints/model_{i}.eqx", model)
 
-    for i in (pbar := tqdm(range(train_config.train_for // run_config.n_updates_on_device))):
+    n_steps = train_config.train_for // run_config.n_updates_on_device
+    for i in (pbar := tqdm(range(n_steps))):
         data_key, fwd_key = jr.split(jr.key(i))
         t = time.time()
         X, y = get_batches(
@@ -152,7 +140,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
                 batch_size,
             ),
         )
-        print(f"loading data took {time.time() - t:.02f}s")
+        loading_data_time = time.time() - t
 
         # step
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
@@ -162,13 +150,33 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         del X, y, fwd_key  # since donate="all" make sure to GC the vars too
 
         # log
-        pbar.set_description(f"loss: {loss.mean()}")
+        pbar.set_description(
+            f"loss:{loss.mean():.2f} / eval:{eval_loss:.2f} | loading:{loading_data_time:.2f}s"
+        )
         if exit_after_first_step:
             return
         wandb.log({"loss": loss.mean(), "step": i})
-        if i % (train_config.train_for // (run_config.n_updates_on_device * 20)) == 1:
-            save(i)
-    save(train_config.train_for // run_config.n_updates_on_device)
+
+        # if we want to checkpoint..
+        if i % (n_steps // run_config.times_to_checkpoint) == 1:
+            checkpoint(i)
+
+        # if we want to eval...
+        if i % (n_steps // run_config.times_to_eval) == 1:
+            X, y = get_batches("test", jr.key(32), shape=(run_config.n_batches_in_eval, batch_size))
+            X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
+            eval_loss = eqx.filter_jit(evaluate)(eqx.nn.inference_mode(model), X, y, sharding)
+
+            test_sample = get_batches("test", key=jr.key(1), shape=(1,))[0][0]
+            out = eqx.filter_jit(model.generate)(idx=test_sample, key=jr.key(42))
+            text = decode([int(x) for x in out])
+            evals_table.append([i, text])
+            wandb.log(
+                {"text": wandb.Table(["step", "text"], data=evals_table), "eval_loss": eval_loss},
+                commit=True,
+            )
+
+    checkpoint(train_config.train_for // run_config.n_updates_on_device)
 
 
 if __name__ == "__main__":

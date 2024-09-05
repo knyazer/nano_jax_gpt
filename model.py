@@ -4,14 +4,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Float, Int, PRNGKeyArray
 
-
-class GPTConfig(eqx.Module):
-    context_len: int = 256
-    vocab_size: int = 65
-    n_layer: int = 6
-    n_head: int = 6
-    n_embed: int = 368
-    dropout: float = 0.2
+from configs import GPTConfig
 
 
 class Block(eqx.Module):
@@ -82,8 +75,7 @@ class GPT(eqx.Module):
     ):
         x = eqx.filter_vmap(self.tok_embed)(idx)
         if key is None:
-            assert targets is None, "key must be provided for training"
-            key = jr.PRNGKey(0)  # inference, so dummy key
+            key = jr.PRNGKey(0)  # inference, i guess, so dummy key
         keys = jr.split(key, len(self.blocks))
         for block, bkey in zip(self.blocks, keys):  # todo: scan over layers
             x = block(x, key=bkey)
