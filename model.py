@@ -11,7 +11,7 @@ class GPTConfig(eqx.Module):
     n_layer: int = 6
     n_head: int = 6
     n_embed: int = 368
-    dropout: float = 0.0
+    dropout: float = 0.2
 
 
 class Block(eqx.Module):
@@ -38,18 +38,23 @@ class Block(eqx.Module):
     def __call__(
         self, x: Float[Array, "ctx emb"], key: PRNGKeyArray | None = None
     ) -> Float[Array, "ctx emb"]:
+        if key is None:
+            mlp_key, attn_key = None, None
+        else:
+            mlp_key, attn_key = jr.split(key)
         x = eqx.filter_vmap(self.lnorm_attn)(x)
         x = x + self.attn(
             query=self.rope(x),
             key_=self.rope(x),
             value=x,
             mask=jnp.tril(jnp.ones((x.shape[0], x.shape[0]))),
-            key=key,
+            key=attn_key,
         )
         x = x + self.dropout(
             eqx.filter_vmap(
                 lambda tok: self.lnorm_mlp(self.proj_fc(jax.nn.gelu(self.expand_fc(tok))))
-            )(x)
+            )(x),
+            key=mlp_key,
         )
         return x
 
@@ -77,9 +82,10 @@ class GPT(eqx.Module):
     ):
         x = eqx.filter_vmap(self.tok_embed)(idx)
         if key is None:
-            key = jr.PRNGKey(0)
+            assert targets is None, "key must be provided for training"
+            key = jr.PRNGKey(0)  # inference, so dummy key
         keys = jr.split(key, len(self.blocks))
-        for block, bkey in zip(self.blocks, keys, strict=False):  # todo: scan over layers
+        for block, bkey in zip(self.blocks, keys):  # todo: scan over layers
             x = block(x, key=bkey)
         x = eqx.filter_vmap(self.final_norm)(x)
         if targets is not None:
@@ -92,7 +98,7 @@ class GPT(eqx.Module):
             loss = None
         return logits, loss
 
-    def generate(self, idx, key, max_new_tokens=100):
+    def generate(self, idx, key, max_new_tokens=256):
         forward = eqx.nn.inference_mode(self)
 
         def scan_fn(carry, _):
@@ -107,4 +113,4 @@ class GPT(eqx.Module):
             return (idx, key), idx_next
 
         _, new_stuff = jax.lax.scan(scan_fn, (idx, key), None, length=max_new_tokens)
-        return jnp.concat((idx.ravel(), new_stuff.ravel()))
+        return new_stuff.ravel()

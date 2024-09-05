@@ -57,6 +57,7 @@ ignore = [
 	"EM101", # string literals for exceptions are alright
 	"T100", # allow breakpoints
 	"T201", # allow print statements
+	"B905", # strict zip flag
 ]
 
 [tool.ruff.lint.pep8-naming]

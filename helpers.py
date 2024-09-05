@@ -2,6 +2,8 @@ import time
 
 import jax
 
+import wandb
+
 
 def auto_batch_size_wrapper(fn, batch_size=0):
     if batch_size != 0:
@@ -29,7 +31,7 @@ Running a single step of training...
             if peak_memory >= available_memory * 0.90:
                 break
             # we try to avoid rematerialization (perf reasons), so no overshooting allowed
-            new_batch_size = int(batch_size * (available_memory * 0.97 / peak_memory))
+            new_batch_size = int(batch_size * (available_memory * 0.95 / peak_memory))
             if new_batch_size <= batch_size:
                 break
             batch_size = new_batch_size
@@ -46,3 +48,23 @@ please, restart with a specified batch size lower than {batch_size}.""")
     print(f"\n\033[32mFinal batch size: {batch_size}. Starting the training...\033[0m\n")
 
     fn(batch_size)
+
+
+class WandbLogger:
+    def __init__(self, *, use_wandb=True, **kws):
+        self.use_wandb = use_wandb
+        self._kws = kws
+
+    def Table(self, *args, **kwargs):  # noqa
+        return wandb.Table(*args, **kwargs)
+
+    def log(self, *args, **kwargs):
+        if self.use_wandb:
+            if wandb.run is None:
+                wandb.init(
+                    project="nano_jax_gpt",
+                    settings=wandb.Settings(code_dir="."),
+                    **self._kws,
+                )
+
+            wandb.log(*args, **kwargs)
