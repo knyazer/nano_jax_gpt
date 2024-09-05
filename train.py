@@ -132,6 +132,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         evals_table.append([i, text])
         wandb.log({"text": wandb.Table(["step", "text"], data=evals_table)}, commit=True)
 
+        Path("checkpoints").mkdir(exist_ok=True)
         eqx.tree_serialise_leaves(f"checkpoints/model_{i}.eqx", model)
 
     for i in (pbar := tqdm(range(train_config.train_for // run_config.n_updates_on_device))):
