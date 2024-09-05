@@ -1,3 +1,4 @@
+import gc
 import time
 
 import jax
@@ -19,7 +20,8 @@ Running a single step of training...
         try:
             # run a single step of training
             fn(batch_size, exit_after_first_step=True)
-            time.sleep(0.5)  # wait for python gc to cleanup
+            gc.collect()
+            time.sleep(0.5)  # wait for the gc...
 
             # load memory stats
             memory_stats = jax.local_devices()[0].memory_stats()
