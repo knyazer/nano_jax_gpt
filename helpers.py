@@ -1,6 +1,7 @@
 import gc
 import time
 
+import equinox as eqx
 import jax
 
 import wandb
@@ -20,6 +21,7 @@ Running a single step of training...
         try:
             # run a single step of training
             fn(batch_size, exit_after_first_step=True)
+            eqx.clear_caches()
             gc.collect()
             time.sleep(0.5)  # wait for the gc...
 
