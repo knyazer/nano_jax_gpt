@@ -23,7 +23,7 @@ wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="nano_jax_gpt_tes
 
 
 class TrainConfig(eqx.Module):
-    batch_size: int = 1024
+    batch_size: int = 32
     lr_config: dict = eqx.field(
         default_factory=lambda: {
             "init_value": 1e-3,
