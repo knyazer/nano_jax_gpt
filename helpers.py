@@ -25,7 +25,7 @@ Running a single step of training...
             memory_stats = jax.local_devices()[0].memory_stats()
             assert memory_stats is not None, "Your devices don't support auto batch sizing :("
             reserved = memory_stats["bytes_in_use"]
-            available_memory = float(memory_stats["bytes_limit"] - reserved)
+            available_memory = float(memory_stats["bytes_limit"] - reserved) / n_devices
             peak_memory = float(memory_stats["peak_bytes_in_use"] - reserved)
 
             if peak_memory >= available_memory * 0.90:
