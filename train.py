@@ -12,7 +12,7 @@ import numpy as np
 import optax
 from jax.experimental import mesh_utils
 from jax_smi import initialise_tracking
-from jaxtyping import Array, Float, Int, PRNGKeyArray
+from jaxtyping import Array, Int, PRNGKeyArray
 from tqdm import tqdm
 
 from configs import GPTConfig, RunConfig, TrainConfig
@@ -62,12 +62,7 @@ def get_batches(split: str, key: PRNGKeyArray, shape: tuple):
 
 
 @eqx.filter_value_and_grad
-def loss_fn(
-    model: GPT,
-    X: Int[Array, "devices batch ctx"],
-    y: Int[Array, "devices batch ctx"],
-    key: PRNGKeyArray,
-) -> Float[Array, ""]:
+def loss_fn(model, X: Int[Array, "batch ctx"], y: Int[Array, "batch ctx"], key):
     return eqx.filter_vmap(model)(X, y, key)[1].mean()
 
 
@@ -82,34 +77,25 @@ def scan_fn(carry, data, model_s):
 
 
 def upd_fn(model, opt_state, X, y, key, sharding):
-    replicated = sharding.replicate()
-    model, opt_state = eqx.filter_shard((model, opt_state), replicated)
+    model, opt_state = eqx.filter_shard((model, opt_state), sharding.replicate())
     X, y = eqx.filter_shard((X, y), sharding)
 
     model_d, model_s = eqx.partition(model, eqx.is_array)
     (model_d, opt_state, _), loss = eqxi.scan(
         eqx.Partial(scan_fn, model_s=model_s), (model_d, opt_state, key), (X, y), kind="lax"
     )
-
-    model, opt_state = eqx.filter_shard((model, opt_state), replicated)
-
     return eqx.combine(model_d, model_s), opt_state, loss.mean()
 
 
 def eval_scan_fn(_, data, model):
-    X, y = data
-    losses = eqx.filter_vmap(model)(X, y)[1].mean()
-    return (), losses
+    losses = eqx.filter_vmap(model)(*data)[1].mean()
+    return None, losses
 
 
 def evaluate(model, X, y, sharding):
-    replicated = sharding.replicate()
-    model = eqx.filter_shard(model, replicated)
+    model = eqx.filter_shard(model, sharding.replicate())
     X, y = eqx.filter_shard((X, y), sharding)
-
-    model_d, model_s = eqx.partition(model, eqx.is_array)
-    _, losses = eqxi.scan(eqx.Partial(eval_scan_fn, model=model), (), (X, y), kind="lax")
-
+    _, losses = eqxi.scan(eqx.Partial(eval_scan_fn, model=model), None, (X, y), kind="lax")
     return losses.mean()
 
 
