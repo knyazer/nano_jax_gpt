@@ -32,6 +32,7 @@ Running a single step of training...
                 break
             # we try to avoid rematerialization (perf reasons), so no overshooting allowed
             new_batch_size = int(batch_size * (available_memory * 0.95 / peak_memory))
+            new_batch_size = (new_batch_size // n_devices) * n_devices  # round to num of devices
             if new_batch_size <= batch_size:
                 break
             batch_size = new_batch_size
@@ -45,7 +46,6 @@ please, restart with a specified batch size lower than {batch_size}.""")
                 return
             raise e  # noqa
 
-    batch_size = (batch_size // n_devices) * n_devices
     print(f"\n\033[32mFinal batch size: {batch_size}. Starting the training...\033[0m\n")
 
     fn(batch_size)

@@ -40,7 +40,7 @@ class TrainConfig(eqx.Module):
 
 class RunConfig(eqx.Module):
     n_devices: int = 1  # number of devices available
-    n_updates_on_device: int = 4  # how many steps to do without moving data to CPU
+    n_updates_on_device: int = 1  # how many steps to do without moving data to CPU
 
     def __init__(self):
         self.n_devices = jax.device_count()
@@ -169,6 +169,4 @@ if __name__ == "__main__":
             optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=1e-6
         ),
     )
-    auto_batch_size_wrapper(
-        main, batch_size=train_config.batch_size, n_devices=run_config.n_devices
-    )
+    auto_batch_size_wrapper(main, batch_size=train_config.batch_size)
