@@ -8,12 +8,11 @@ import numpy as np
 import tiktoken
 from datasets import load_dataset  # huggingface datasets
 from tqdm import tqdm
-import multiprocessing
 
 if __name__ == "__main__":
     # number of workers in .map() call
     # good number to use is ~order number of cpu cores // 2
-    num_proc = multiprocessing.cpu_count() // 2
+    num_proc = len(os.sched_getaffinity(0)) // 2
     print(f"Running with {num_proc} workers")
 
     # number of workers in load_dataset() call
