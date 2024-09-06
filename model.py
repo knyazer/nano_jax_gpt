@@ -67,19 +67,27 @@ class MiddleHead(eqx.Module):
             config.n_embed, config.vocab_size + p_size, use_bias=False, key=k1
         )
         self.lnorm = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
-        p_linear = eqx.nn.Linear(p_size, 1, key=k2)
-        self.p_linear = eqx.tree_at(
-            lambda layer: layer.bias,
-            p_linear,
-            p_linear.bias - 5.0,  # type: ignore
-        )
+        self.p_linear = eqx.nn.Linear(p_size, 1, key=k2)
         self.p_size = p_size
         self.conditional_limit = config.conditional_limit
 
     def __call__(self, x: Float[Array, "embed"]):
         out = self.linear(self.lnorm(x))
         p = self.p_linear(jax.nn.gelu(out[: self.p_size], approximate=True))
-        return self.conditional_limit * jax.nn.sigmoid(p), out[self.p_size :]
+        return jax.nn.sigmoid(p), out[self.p_size :]
+
+
+class GPTLog(eqx.Module):
+    accept_rates: Float[Array, "n_layer"]
+    p_scaling_factors: Float[Array, "n_layer"]
+    layerwise_losses: Float[Array, "n_layer"]
+    expected_compute: Float[Array, ""]
+
+    def __init__(self, accept_rates, p_scaling_factors, layerwise_losses, expected_compute):
+        self.accept_rates = jnp.array(accept_rates)
+        self.p_scaling_factors = jnp.array(p_scaling_factors)
+        self.layerwise_losses = jnp.array(layerwise_losses)
+        self.expected_compute = jnp.array(expected_compute)
 
 
 class GPT(eqx.Module):
@@ -118,8 +126,12 @@ class GPT(eqx.Module):
 
         already_accepted_p = jnp.zeros((self.config.context_len,), dtype=jnp.float32)
         total_loss = jnp.zeros((self.config.context_len,), dtype=jnp.float32)
-        current_estimated_compute = 4
-        accepts_log = []
+        current_estimated_compute = 4.0
+
+        accept_rates = []
+        layerwise_losses = []
+        p_scaling_factors = []
+        expected_compute = 0.0
 
         for block_index, (block, bkey) in enumerate(zip(self.blocks, keys)):  # todo: jax.lax.scan
             x = block(x, key=bkey)
@@ -127,12 +139,27 @@ class GPT(eqx.Module):
             if labels is not None and block_index != len(self.blocks) - 1 and not evaluation:
                 block_accept_p, logits = eqx.filter_vmap(self.middle_heads[block_index])(x)
                 block_accept_p = block_accept_p.ravel()
+                # we regularize by forcing geom mean block accept to be at most conditional limit
+                mean_block_accept_p = 1.0 - jnp.exp(jnp.log(1.0 - block_accept_p).mean())
+                scale_factor = jax.lax.stop_gradient(
+                    jnp.clip(
+                        self.config.conditional_limit / mean_block_accept_p,
+                        min=0.0,
+                        max=1.0,
+                    )
+                )
+                block_accept_p = block_accept_p * scale_factor
                 log_probs = jax.nn.log_softmax(logits)
                 loss = -jnp.sum(labels * log_probs, axis=1) / self.config.context_len
                 joint_block_p = (1.0 - already_accepted_p) * block_accept_p
-                accepts_log.append(joint_block_p.mean())
                 already_accepted_p += joint_block_p
+                expected_compute += joint_block_p.mean() * current_estimated_compute
+                # log(compute) * loss = C
                 total_loss += joint_block_p * current_estimated_compute * loss
+
+                layerwise_losses.append(loss.sum())
+                accept_rates.append(joint_block_p.mean())
+                p_scaling_factors.append(scale_factor)
 
         # total loss is expectation of the logit diff wrt
         x = eqx.filter_vmap(self.final_norm)(x)
@@ -141,10 +168,19 @@ class GPT(eqx.Module):
             log_probs = jax.nn.log_softmax(logits)
             loss = -jnp.sum(labels * log_probs, axis=1) / self.config.context_len
             total_loss += (1.0 - already_accepted_p) * loss * current_estimated_compute
+            expected_compute += (1.0 - already_accepted_p.mean()) * current_estimated_compute
+
+            layerwise_losses.append(loss.sum())
+            accept_rates.append((1.0 - already_accepted_p).mean())
+            p_scaling_factors.append(jnp.array(1.0))
         else:
             logits = self.lm_head(x[-1])
         final_loss = total_loss.sum() / current_estimated_compute
-        return logits, final_loss, jnp.array(accepts_log)
+        return (
+            logits,
+            final_loss,
+            GPTLog(accept_rates, p_scaling_factors, layerwise_losses, expected_compute - 4.0),
+        )
 
     def generate(self, idx, key, max_new_tokens=100):
         forward = eqx.nn.inference_mode(self)

@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 from configs import GPTConfig, RunConfig, TrainConfig
 from helpers import WandbLogger, auto_batch_size_wrapper
-from model import GPT
+from model import GPT, GPTLog
 
 initialise_tracking()
 
@@ -27,7 +27,8 @@ train_config: TrainConfig = TrainConfig.from_preset("chargpt")
 run_config: RunConfig = RunConfig.from_preset("chargpt")
 
 wandb = WandbLogger(
-    use_wandb=(jax.process_index() == 0), name=f"smth-{model_config.conditional_limit}"
+    use_wandb=(jax.process_index() == 0),
+    name=f"nomin-{model_config.conditional_limit}-{model_config.n_layer}",
 )
 
 if train_config.dataset_name == "shakespear-char":
@@ -137,7 +138,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         model, opt_state, loss, logs = eqx.filter_jit(upd_fn, donate="all")(
             model, opt_state, X, y, fwd_key, sharding
         )
-        logs = logs.mean(axis=(0, 1))
+        logs: GPTLog = jax.tree.map(lambda x: x.mean(axis=(0, 1)), logs)
         del X, y, fwd_key  # since donate="all" make sure to GC the vars too
 
         # log
@@ -148,9 +149,11 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
             return
         log_dict = {}
 
-        for j, layer_p in enumerate(logs):
+        for j, layer_p in enumerate(logs.accept_rates):
             log_dict[f"prob_{j}"] = layer_p
-        log_dict[f"prob_{len(logs)}"] = 1 - logs.sum()
+            log_dict[f"scale_{j}"] = logs.p_scaling_factors[j]
+            log_dict[f"loss_{j}"] = logs.layerwise_losses[j]
+        log_dict["expected compute"] = logs.expected_compute
 
         wandb.log({"loss": loss.mean(), "step": i, **log_dict})
 
