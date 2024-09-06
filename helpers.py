@@ -69,7 +69,7 @@ class WandbLogger:
         if self.use_wandb:
             if wandb.run is None:
                 wandb.init(
-                    project="nano_jax_gpt",
+                    project="multitoken_gpt2",
                     settings=wandb.Settings(code_dir="."),
                     **self._kws,
                 )

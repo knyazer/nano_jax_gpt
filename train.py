@@ -28,7 +28,7 @@ run_config: RunConfig = RunConfig.from_preset("chargpt")
 
 wandb = WandbLogger(
     use_wandb=(jax.process_index() == 0),
-    name=f"nomin-{model_config.conditional_limit}-{model_config.n_layer}",
+    name=f"long-{model_config.conditional_limit}-{model_config.n_layer}",
 )
 
 if train_config.dataset_name == "shakespear-char":
@@ -93,19 +93,19 @@ def upd_fn(model, opt_state, X, y, key, sharding):
 
 
 def eval_scan_fn(_, data, model):
-    losses = eqx.filter_vmap(eqx.Partial(model, evaluation=True))(*data)[1].mean()
-    return None, losses
+    logs = eqx.filter_vmap(model)(*data)[2]
+    return None, logs.layerwise_losses
 
 
 def evaluate(model, X, y, sharding):
     model = eqx.filter_shard(model, sharding.replicate())
     X, y = eqx.filter_shard((X, y), sharding)
     _, losses = eqxi.scan(eqx.Partial(eval_scan_fn, model=model), None, (X, y), kind="lax")
-    return losses.mean()
+    return losses.mean(axis=(0, 1))
 
 
 def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
-    model = GPT(jr.key(0), model_config)
+    model = GPT(jr.key(1), model_config)
     opt_state = optim.init(eqx.filter(model, eqx.is_array))
     evals_table = []
     eval_loss = jnp.nan
@@ -151,8 +151,8 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
 
         for j, layer_p in enumerate(logs.accept_rates):
             log_dict[f"prob_{j}"] = layer_p
-            log_dict[f"scale_{j}"] = logs.p_scaling_factors[j]
             log_dict[f"loss_{j}"] = logs.layerwise_losses[j]
+            log_dict[f"loss_weighted_{j}"] = logs.layerwise_weighted[j]
         log_dict["expected compute"] = logs.expected_compute
 
         wandb.log({"loss": loss.mean(), "step": i, **log_dict})
@@ -165,15 +165,20 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         if i % (n_steps // run_config.times_to_eval) == 1:
             X, y = get_batches("test", jr.key(32), shape=(run_config.n_batches_in_eval, batch_size))
             X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
-            eval_loss = eqx.filter_jit(evaluate)(eqx.nn.inference_mode(model), X, y, sharding)
+            eval_losses = eqx.filter_jit(evaluate)(eqx.nn.inference_mode(model), X, y, sharding)
+            eval_dict = {}
+            for j, _loss in enumerate(eval_losses):
+                eval_dict[f"eval_loss_layer_{j}"] = _loss
+                eval_dict[f"eval_loss_weighted_{j}"] = logs.layerwise_weighted[j]
+            eval_loss = eval_dict[f"eval_loss_layer_{model_config.n_layer - 1}"]
 
             test_sample = get_batches("test", key=jr.key(1), shape=(1,))[0][0]
-            out = eqx.filter_jit(model.generate)(idx=test_sample, key=jr.key(42))
+            out = model.generate(idx=test_sample, key=jr.key(42))
             text = decode([int(x) for x in out])
             print(text[:100])
             evals_table.append([i, text])
             wandb.log(
-                {"text": wandb.Table(["step", "text"], data=evals_table), "eval_loss": eval_loss},
+                {"text": wandb.Table(["step", "text"], data=evals_table), **eval_dict},
                 commit=True,
             )
 

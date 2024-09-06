@@ -9,7 +9,7 @@ class GPTConfig(eqx.Module):
     n_head: int = 6
     n_embed: int = 368
     dropout: float = 0.2
-    conditional_limit: float = 0.5
+    conditional_limit: float = 0.3
 
     @classmethod
     def from_preset(cls, name: str):
@@ -29,18 +29,18 @@ class GPTConfig(eqx.Module):
 
 
 class TrainConfig(eqx.Module):
-    batch_size: int = 16
+    batch_size: int = 24
     lr_config: dict = eqx.field(
         default_factory=lambda: {
-            "init_value": 1e-3,
-            "peak_value": 1e-3,
-            "warmup_steps": 100,
-            "decay_steps": 5000,
-            "end_value": 1e-4,
+            "init_value": 1e-4,
+            "peak_value": 1e-4,
+            "warmup_steps": 200,
+            "decay_steps": 50_000,
+            "end_value": 1e-5,
         }
     )
     global_norm: float = 1.0
-    train_for: int = 5000
+    train_for: int = 50_000
     dataset_name: str = "shakespear-char"
 
     @classmethod
@@ -71,7 +71,7 @@ class RunConfig(eqx.Module):
     n_devices: int = 1  # number of devices available
     n_updates_on_device: int = 4  # how many steps to do without moving data to CPU
     times_to_checkpoint: int = 2  # how many times to checkpoint throughout the training
-    times_to_eval: int = 20  # how many times to eval throughout training
+    times_to_eval: int = 250  # how many times to eval throughout training
     n_batches_in_eval: int = 20  # how many batches in eval
 
     def __post_init__(self):

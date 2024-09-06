@@ -74,20 +74,20 @@ class MiddleHead(eqx.Module):
     def __call__(self, x: Float[Array, "embed"]):
         out = self.linear(self.lnorm(x))
         p = self.p_linear(jax.nn.gelu(out[: self.p_size], approximate=True))
-        return jax.nn.sigmoid(p), out[self.p_size :]
+        return jax.nn.sigmoid(p) * self.conditional_limit, out[self.p_size :]
 
 
 class GPTLog(eqx.Module):
     accept_rates: Float[Array, "n_layer"]
-    p_scaling_factors: Float[Array, "n_layer"]
     layerwise_losses: Float[Array, "n_layer"]
+    layerwise_weighted: Float[Array, "n_layer"]
     expected_compute: Float[Array, ""]
 
-    def __init__(self, accept_rates, p_scaling_factors, layerwise_losses, expected_compute):
+    def __init__(self, accept_rates, layerwise_losses, layerwise_weighted, expected_compute):
         self.accept_rates = jnp.array(accept_rates)
-        self.p_scaling_factors = jnp.array(p_scaling_factors)
         self.layerwise_losses = jnp.array(layerwise_losses)
         self.expected_compute = jnp.array(expected_compute)
+        self.layerwise_weighted = jnp.array(layerwise_weighted)
 
 
 class GPT(eqx.Module):
@@ -115,7 +115,7 @@ class GPT(eqx.Module):
         targets: Int[Array, "ctx"] | None = None,
         key: PRNGKeyArray | None = None,
         *,
-        evaluation: bool = False,
+        generation: bool = False,
     ):
         labels = jax.nn.one_hot(targets, self.config.vocab_size) if targets is not None else None
 
@@ -130,71 +130,76 @@ class GPT(eqx.Module):
 
         accept_rates = []
         layerwise_losses = []
-        p_scaling_factors = []
+        layerwise_weighted = []
         expected_compute = 0.0
+        unscaled_aap = 0.0
+
+        def combine_compute_and_loss(compute, loss):
+            return compute * loss
 
         for block_index, (block, bkey) in enumerate(zip(self.blocks, keys)):  # todo: jax.lax.scan
-            x = block(x, key=bkey)
-            current_estimated_compute += 1
-            if labels is not None and block_index != len(self.blocks) - 1 and not evaluation:
-                block_accept_p, logits = eqx.filter_vmap(self.middle_heads[block_index])(x)
-                block_accept_p = block_accept_p.ravel()
-                # we regularize by forcing geom mean block accept to be at most conditional limit
-                mean_block_accept_p = 1.0 - jnp.exp(jnp.log(1.0 - block_accept_p).mean())
-                scale_factor = jax.lax.stop_gradient(
-                    jnp.clip(
-                        self.config.conditional_limit / mean_block_accept_p,
-                        min=0.0,
-                        max=1.0,
+            p_key, _bkey = jr.split(bkey)
+            x = eqx.filter_jit(block)(x, key=_bkey)
+            if generation and block_index != len(self.blocks) - 1:
+                accept_p, logit = self.middle_heads[block_index](x[-1])
+                # sample from block_accept_p
+                if jr.bernoulli(p_key, accept_p).ravel()[0]:
+                    return logit, None, None
+            else:
+                current_estimated_compute += 1
+                if labels is not None and block_index != len(self.blocks) - 1:
+                    block_accept_p, logits = eqx.filter_vmap(self.middle_heads[block_index])(x)
+                    block_accept_p = block_accept_p.ravel()
+                    # we regularize by forcing geom mean block accept to be at most conditional limi
+                    log_probs = jax.nn.log_softmax(logits)
+                    loss = -jnp.sum(labels * log_probs, axis=1) / self.config.context_len
+                    joint_block_p = (1.0 - already_accepted_p) * block_accept_p
+                    already_accepted_p += joint_block_p
+                    unscaled_aap += joint_block_p.mean()
+                    expected_compute += joint_block_p.mean() * current_estimated_compute
+                    # log(compute) * loss = C
+                    total_loss += joint_block_p * combine_compute_and_loss(
+                        current_estimated_compute, loss
                     )
-                )
-                block_accept_p = block_accept_p * scale_factor
-                log_probs = jax.nn.log_softmax(logits)
-                loss = -jnp.sum(labels * log_probs, axis=1) / self.config.context_len
-                joint_block_p = (1.0 - already_accepted_p) * block_accept_p
-                already_accepted_p += joint_block_p
-                expected_compute += joint_block_p.mean() * current_estimated_compute
-                # log(compute) * loss = C
-                total_loss += joint_block_p * current_estimated_compute * loss
 
-                layerwise_losses.append(loss.sum())
-                accept_rates.append(joint_block_p.mean())
-                p_scaling_factors.append(scale_factor)
+                    layerwise_losses.append(loss.sum())
+                    layerwise_weighted.append((joint_block_p * loss).sum() / joint_block_p.sum())
+                    accept_rates.append(joint_block_p.mean())
 
         # total loss is expectation of the logit diff wrt
         x = eqx.filter_vmap(self.final_norm)(x)
-        if labels is not None:
+        if not generation:
             logits = eqx.filter_vmap(self.lm_head)(x)
             log_probs = jax.nn.log_softmax(logits)
             loss = -jnp.sum(labels * log_probs, axis=1) / self.config.context_len
-            total_loss += (1.0 - already_accepted_p) * loss * current_estimated_compute
-            expected_compute += (1.0 - already_accepted_p.mean()) * current_estimated_compute
+            joint_accept_p = 1.0 - already_accepted_p
+            total_loss += joint_accept_p * combine_compute_and_loss(current_estimated_compute, loss)
+            expected_compute += (1.0 - unscaled_aap) * current_estimated_compute
 
             layerwise_losses.append(loss.sum())
-            accept_rates.append((1.0 - already_accepted_p).mean())
-            p_scaling_factors.append(jnp.array(1.0))
+            layerwise_weighted.append((joint_accept_p * loss).sum() / joint_accept_p.sum())
+            accept_rates.append(joint_accept_p.mean())
         else:
             logits = self.lm_head(x[-1])
-        final_loss = total_loss.sum() / current_estimated_compute
         return (
             logits,
-            final_loss,
-            GPTLog(accept_rates, p_scaling_factors, layerwise_losses, expected_compute - 4.0),
+            total_loss.sum() / current_estimated_compute,
+            GPTLog(accept_rates, layerwise_losses, layerwise_weighted, expected_compute - 4.0),
         )
 
     def generate(self, idx, key, max_new_tokens=100):
+        idx = idx.astype(jnp.int32)
         forward = eqx.nn.inference_mode(self)
+        new_stuff = []
 
-        def scan_fn(carry, _):
-            idx, key = carry
-            key, subkey = jax.random.split(key)
+        for _ in range(max_new_tokens):
+            key, subkey1, subkey2 = jax.random.split(key, 3)
 
-            logits, *_ = forward(idx)
-            idx_next = jr.categorical(logits=logits, key=subkey)
+            logits, *_ = forward(idx, generation=True, key=subkey1)
+            idx_next = jax.random.categorical(logits=logits, key=subkey2)
 
             idx = jnp.roll(idx, -1)
             idx = idx.at[-1].set(idx_next)
-            return (idx, key), idx_next
+            new_stuff.append(idx_next)
 
-        _, new_stuff = jax.lax.scan(scan_fn, (idx, key), None, length=max_new_tokens)
-        return new_stuff.ravel()
+        return jnp.array(new_stuff).ravel()
