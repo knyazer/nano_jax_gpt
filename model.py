@@ -75,7 +75,7 @@ class MiddleHead(eqx.Module):
     def __call__(self, x: Float[Array, "embed"]):
         out = self.linear(self.lnorm(x))
         p = self.p_linear(jax.nn.gelu(out[: self.p_size], approximate=True))
-        return jnp.min(jnp.array([jax.nn.sigmoid(p).ravel(), 0.7])), out[self.p_size :]
+        return jnp.min(jnp.stack((jax.nn.sigmoid(p), jnp.array([0.7])))), out[self.p_size :]
 
 
 class GPT(eqx.Module):
