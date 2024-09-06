@@ -21,7 +21,7 @@ from model import GPT
 
 initialise_tracking()
 
-wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="nano_jax_gpt_test")
+wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="max-dep-0.7")
 
 model_config: GPTConfig = GPTConfig.from_preset("chargpt")
 train_config: TrainConfig = TrainConfig.from_preset("chargpt")
@@ -147,9 +147,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
 
         for j, layer_p in enumerate(logs):
             log_dict[f"prob_{j}"] = layer_p
-            log_dict[f"logp_{j}"] = np.log(layer_p)
         log_dict[f"prob_{len(logs)}"] = 1 - logs.sum()
-        log_dict[f"logp_{len(logs)}"] = np.log(1 - logs.sum())
 
         wandb.log({"loss": loss.mean(), "step": i, **log_dict})
 

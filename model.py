@@ -75,7 +75,7 @@ class MiddleHead(eqx.Module):
     def __call__(self, x: Float[Array, "embed"]):
         out = self.linear(self.lnorm(x))
         p = self.p_linear(jax.nn.gelu(out[: self.p_size], approximate=True))
-        return 0.9 * jax.nn.sigmoid(p), out[self.p_size :]
+        return jnp.min(jnp.array([jax.nn.sigmoid(p).ravel(), 0.7])), out[self.p_size :]
 
 
 class GPT(eqx.Module):
@@ -116,7 +116,6 @@ class GPT(eqx.Module):
         already_accepted_p = jnp.zeros((self.config.context_len,), dtype=jnp.float32)
         total_loss = jnp.zeros((self.config.context_len,), dtype=jnp.float32)
         current_estimated_compute = 4
-        reg_factor = 2
         accepts_log = []
 
         for block_index, (block, bkey) in enumerate(zip(self.blocks, keys)):  # todo: jax.lax.scan
@@ -130,10 +129,7 @@ class GPT(eqx.Module):
                 joint_block_p = (1.0 - already_accepted_p) * block_accept_p
                 accepts_log.append(joint_block_p.mean())
                 already_accepted_p += joint_block_p
-                total_loss += (
-                    joint_block_p * current_estimated_compute * loss
-                    + block_accept_p.mean() * reg_factor
-                )
+                total_loss += joint_block_p * current_estimated_compute * loss
 
         # total loss is expectation of the logit diff wrt
         x = eqx.filter_vmap(self.final_norm)(x)
@@ -144,7 +140,8 @@ class GPT(eqx.Module):
             total_loss += (1.0 - already_accepted_p) * loss * current_estimated_compute
         else:
             logits = self.lm_head(x[-1])
-        return logits, total_loss.sum() / current_estimated_compute, jnp.array(accepts_log)
+        final_loss = total_loss.sum() / current_estimated_compute
+        return logits, final_loss, jnp.array(accepts_log)
 
     def generate(self, idx, key, max_new_tokens=256):
         forward = eqx.nn.inference_mode(self)
