@@ -61,19 +61,20 @@ def get_batches(split: str, key: PRNGKeyArray, shape: tuple):
     )
 
 
-@eqx.filter_value_and_grad
+@eqx.filter_value_and_grad(has_aux=True)
 def loss_fn(model, X: Int[Array, "batch ctx"], y: Int[Array, "batch ctx"], key):
-    return eqx.filter_vmap(model)(X, y, key)[1].mean()
+    out = eqx.filter_vmap(model)(X, y, key)
+    return out[1].mean(), out[2]
 
 
 def scan_fn(carry, data, model_s):
     model_d, opt_state, key = carry
     model = eqx.combine(model_d, model_s)
     X, y = data
-    loss, grads = loss_fn(model, X, y, jr.split(key, X.shape[:-1]))
+    (loss, logs), grads = loss_fn(model, X, y, jr.split(key, X.shape[:-1]))
     updates, opt_state = optim.update(grads, opt_state, model)
     model = eqx.apply_updates(model, updates)
-    return (eqx.partition(model, eqx.is_array)[0], opt_state, jr.split(key)[0]), loss
+    return (eqx.partition(model, eqx.is_array)[0], opt_state, jr.split(key)[0]), (loss, logs)
 
 
 def upd_fn(model, opt_state, X, y, key, sharding):
@@ -81,14 +82,14 @@ def upd_fn(model, opt_state, X, y, key, sharding):
     X, y = eqx.filter_shard((X, y), sharding)
 
     model_d, model_s = eqx.partition(model, eqx.is_array)
-    (model_d, opt_state, _), loss = eqxi.scan(
+    (model_d, opt_state, _), (loss, logs) = eqxi.scan(
         eqx.Partial(scan_fn, model_s=model_s), (model_d, opt_state, key), (X, y), kind="lax"
     )
-    return eqx.combine(model_d, model_s), opt_state, loss.mean()
+    return eqx.combine(model_d, model_s), opt_state, loss.mean(), logs
 
 
 def eval_scan_fn(_, data, model):
-    losses = eqx.filter_vmap(model)(*data)[1].mean()
+    losses = eqx.filter_vmap(eqx.Partial(model, evaluation=True))(*data)[1].mean()
     return None, losses
 
 
@@ -130,9 +131,10 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
 
         # step
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
-        model, opt_state, loss = eqx.filter_jit(upd_fn, donate="all")(
+        model, opt_state, loss, logs = eqx.filter_jit(upd_fn, donate="all")(
             model, opt_state, X, y, fwd_key, sharding
         )
+        logs = logs.mean(axis=(0, 1))
         del X, y, fwd_key  # since donate="all" make sure to GC the vars too
 
         # log
@@ -141,7 +143,15 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         )
         if exit_after_first_step:
             return
-        wandb.log({"loss": loss.mean(), "step": i})
+        log_dict = {}
+
+        for j, layer_p in enumerate(logs):
+            log_dict[f"prob_{j}"] = layer_p
+            log_dict[f"logp_{j}"] = np.log(layer_p)
+        log_dict[f"prob_{len(logs)}"] = 1 - logs.sum()
+        log_dict[f"logp_{len(logs)}"] = np.log(1 - logs.sum())
+
+        wandb.log({"loss": loss.mean(), "step": i, **log_dict})
 
         # if we want to checkpoint..
         if i % (n_steps // run_config.times_to_checkpoint) == 1:
@@ -156,6 +166,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
             test_sample = get_batches("test", key=jr.key(1), shape=(1,))[0][0]
             out = eqx.filter_jit(model.generate)(idx=test_sample, key=jr.key(42))
             text = decode([int(x) for x in out])
+            print(text[:100])
             evals_table.append([i, text])
             wandb.log(
                 {"text": wandb.Table(["step", "text"], data=evals_table), "eval_loss": eval_loss},
@@ -169,7 +180,7 @@ if __name__ == "__main__":
     optim = optax.chain(
         optax.clip_by_global_norm(train_config.global_norm),
         optax.adamw(
-            optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=1e-6
+            optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=1e-4
         ),
     )
     auto_batch_size_wrapper(
