@@ -21,11 +21,14 @@ from model import GPT
 
 initialise_tracking()
 
-wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="max-dep-0.7")
 
 model_config: GPTConfig = GPTConfig.from_preset("chargpt")
 train_config: TrainConfig = TrainConfig.from_preset("chargpt")
 run_config: RunConfig = RunConfig.from_preset("chargpt")
+
+wandb = WandbLogger(
+    use_wandb=(jax.process_index() == 0), name=f"smth-{model_config.conditional_limit}"
+)
 
 if train_config.dataset_name == "shakespear-char":
     from prepare_shakespear import decode  # type: ignore

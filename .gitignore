@@ -4,3 +4,4 @@
 **.bin
 wandb/
 **.eqx
+checkpoints

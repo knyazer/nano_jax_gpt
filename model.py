@@ -59,23 +59,27 @@ class MiddleHead(eqx.Module):
     p_linear: eqx.nn.Linear
     p_size: int
     lnorm: eqx.nn.RMSNorm
+    conditional_limit: float
 
-    def __init__(self, embed_size: int, vocab_size: int, key: PRNGKeyArray, p_size: int = 10):
+    def __init__(self, config: GPTConfig, key: PRNGKeyArray, p_size: int = 10):
         k1, k2 = jr.split(key)
-        self.linear = eqx.nn.Linear(embed_size, vocab_size + p_size, use_bias=False, key=k1)
-        self.lnorm = eqx.nn.RMSNorm(embed_size, use_bias=False)
+        self.linear = eqx.nn.Linear(
+            config.n_embed, config.vocab_size + p_size, use_bias=False, key=k1
+        )
+        self.lnorm = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         p_linear = eqx.nn.Linear(p_size, 1, key=k2)
         self.p_linear = eqx.tree_at(
             lambda layer: layer.bias,
             p_linear,
-            p_linear.bias - 10.0,  # type: ignore
+            p_linear.bias - 5.0,  # type: ignore
         )
         self.p_size = p_size
+        self.conditional_limit = config.conditional_limit
 
     def __call__(self, x: Float[Array, "embed"]):
         out = self.linear(self.lnorm(x))
         p = self.p_linear(jax.nn.gelu(out[: self.p_size], approximate=True))
-        return jnp.min(jnp.stack((jax.nn.sigmoid(p), jnp.array([0.7])))), out[self.p_size :]
+        return self.conditional_limit * jax.nn.sigmoid(p), out[self.p_size :]
 
 
 class GPT(eqx.Module):
@@ -93,8 +97,7 @@ class GPT(eqx.Module):
         self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.lm_head = eqx.nn.Linear(config.n_embed, config.vocab_size, use_bias=False, key=k4)
         self.middle_heads = [
-            MiddleHead(config.n_embed, config.vocab_size, key=dec_key)
-            for dec_key in jr.split(k5, config.n_layer - 1)
+            MiddleHead(config, key=dec_key) for dec_key in jr.split(k5, config.n_layer - 1)
         ]
         self.config = config
 
@@ -143,7 +146,7 @@ class GPT(eqx.Module):
         final_loss = total_loss.sum() / current_estimated_compute
         return logits, final_loss, jnp.array(accepts_log)
 
-    def generate(self, idx, key, max_new_tokens=256):
+    def generate(self, idx, key, max_new_tokens=100):
         forward = eqx.nn.inference_mode(self)
 
         def scan_fn(carry, _):
