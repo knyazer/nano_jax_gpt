@@ -674,6 +674,7 @@ dependencies = [
     { name = "jax", extra = ["cuda12-pip"] },
     { name = "jax-smi" },
     { name = "optax" },
+    { name = "termcolor" },
     { name = "tiktoken" },
     { name = "wandb" },
 ]
@@ -686,6 +687,7 @@ requires-dist = [
     { name = "jax", extras = ["cuda12-pip"], specifier = ">=0.4.31" },
     { name = "jax-smi", specifier = ">=1.0.4" },
     { name = "optax", specifier = ">=0.2.3" },
+    { name = "termcolor", specifier = ">=2.4.0" },
     { name = "tiktoken", specifier = ">=0.7.0" },
     { name = "wandb", specifier = ">=0.17.8" },
 ]

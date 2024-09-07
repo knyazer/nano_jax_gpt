@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -116,6 +118,8 @@ class GPT(eqx.Module):
         key: PRNGKeyArray | None = None,
         *,
         generation: bool = False,
+        shortcircuit: int | None = None,
+        p_wrap: Callable = lambda x: x,
     ):
         labels = jax.nn.one_hot(targets, self.config.vocab_size) if targets is not None else None
 
@@ -142,9 +146,12 @@ class GPT(eqx.Module):
             x = eqx.filter_jit(block)(x, key=_bkey)
             if generation and block_index != len(self.blocks) - 1:
                 accept_p, logit = self.middle_heads[block_index](x[-1])
+
                 # sample from block_accept_p
-                if jr.bernoulli(p_key, accept_p).ravel()[0]:
-                    return logit, None, None
+                if (
+                    jr.bernoulli(p_key, p_wrap(accept_p)).ravel()[0] and shortcircuit is None
+                ) or shortcircuit == block_index:
+                    return logit, block_index
             else:
                 current_estimated_compute += 1
                 if labels is not None and block_index != len(self.blocks) - 1:
@@ -163,7 +170,7 @@ class GPT(eqx.Module):
                     )
 
                     layerwise_losses.append(loss.sum())
-                    layerwise_weighted.append((joint_block_p * loss).sum() / joint_block_p.sum())
+                    layerwise_weighted.append((joint_block_p * loss).sum() / joint_block_p.mean())
                     accept_rates.append(joint_block_p.mean())
 
         # total loss is expectation of the logit diff wrt
@@ -177,29 +184,26 @@ class GPT(eqx.Module):
             expected_compute += (1.0 - unscaled_aap) * current_estimated_compute
 
             layerwise_losses.append(loss.sum())
-            layerwise_weighted.append((joint_accept_p * loss).sum() / joint_accept_p.sum())
+            layerwise_weighted.append((joint_accept_p * loss).sum() / joint_accept_p.mean())
             accept_rates.append(joint_accept_p.mean())
         else:
             logits = self.lm_head(x[-1])
+            return logits, len(self.blocks) - 1
         return (
             logits,
             total_loss.sum() / current_estimated_compute,
             GPTLog(accept_rates, layerwise_losses, layerwise_weighted, expected_compute - 4.0),
         )
 
-    def generate(self, idx, key, max_new_tokens=100):
+    def generate(self, idx, key, max_new_tokens=100, **kws):
         idx = idx.astype(jnp.int32)
         forward = eqx.nn.inference_mode(self)
-        new_stuff = []
-
         for _ in range(max_new_tokens):
             key, subkey1, subkey2 = jax.random.split(key, 3)
 
-            logits, *_ = forward(idx, generation=True, key=subkey1)
+            logits, head_index = forward(idx, generation=True, key=subkey1, **kws)
             idx_next = jax.random.categorical(logits=logits, key=subkey2)
 
             idx = jnp.roll(idx, -1)
             idx = idx.at[-1].set(idx_next)
-            new_stuff.append(idx_next)
-
-        return jnp.array(new_stuff).ravel()
+            yield idx_next, head_index

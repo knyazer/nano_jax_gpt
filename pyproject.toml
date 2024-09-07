@@ -16,6 +16,7 @@ dependencies = [
     "jax-smi>=1.0.4",
     "jax[cuda12-pip]>=0.4.31",
     "optax>=0.2.3",
+    "termcolor>=2.4.0",
     "tiktoken>=0.7.0",
     "wandb>=0.17.8",
 ]
