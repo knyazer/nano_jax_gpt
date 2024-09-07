@@ -23,7 +23,7 @@ class Block(eqx.Module):
         self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.attn = eqx.nn.MultiheadAttention(
-            config.n_head, config.n_embed, dropout_p=config.dropout, key=k3
+            config.n_heads, config.n_embed, dropout_p=config.dropout, key=k3
         )
         self.rope = eqx.nn.RotaryPositionalEmbedding(config.n_embed, 10_000)
         self.dropout = eqx.nn.Dropout(config.dropout)
@@ -62,7 +62,7 @@ class GPT(eqx.Module):
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3, k4 = jr.split(key, 4)
         self.tok_embed = eqx.nn.Embedding(config.vocab_size, config.n_embed, key=k2)
-        self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layer)]
+        self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layers)]
         self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.lm_head = eqx.nn.Linear(config.n_embed, config.vocab_size, use_bias=False, key=k4)
         self.config = config

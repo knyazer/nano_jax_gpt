@@ -5,8 +5,8 @@ import jax
 class GPTConfig(eqx.Module):
     context_len: int = 256
     vocab_size: int = 65
-    n_layer: int = 6
-    n_head: int = 6
+    n_layers: int = 6
+    n_heads: int = 6
     n_embed: int = 368
     dropout: float = 0.2
 
@@ -20,8 +20,8 @@ class GPTConfig(eqx.Module):
                     context_len=1024,
                     vocab_size=50384,
                     n_embed=768,
-                    n_layer=12,
-                    n_head=12,
+                    n_layers=12,
+                    n_heads=12,
                 )
             case _:
                 raise AssertionError("Only 'chargpt' or 'gpt2' are allowed as presets!")
