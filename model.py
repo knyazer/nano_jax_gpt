@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Float, Int, PRNGKeyArray
 
+from attn import FlashMultiheadAttention
 from configs import GPTConfig
 
 
@@ -12,18 +13,32 @@ class Block(eqx.Module):
     proj_fc: eqx.nn.Linear
     lnorm_attn: eqx.nn.RMSNorm
     lnorm_mlp: eqx.nn.RMSNorm
-    attn: eqx.nn.MultiheadAttention
+    attn: FlashMultiheadAttention
     rope: eqx.nn.RotaryPositionalEmbedding
     dropout: eqx.nn.Dropout
+    dtype: jnp.dtype
 
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3 = jr.split(key, 3)
-        self.expand_fc = eqx.nn.Linear(config.n_embed, 4 * config.n_embed, use_bias=False, key=k1)
-        self.proj_fc = eqx.nn.Linear(config.n_embed * 4, config.n_embed, use_bias=False, key=k2)
-        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
-        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
-        self.attn = eqx.nn.MultiheadAttention(
-            config.n_heads, config.n_embed, dropout_p=config.dropout, key=k3
+        self.dtype = config.dtype
+        self.expand_fc = eqx.nn.Linear(
+            config.n_embed, 4 * config.n_embed, use_bias=False, key=k1, dtype=self.dtype
+        )
+        self.proj_fc = eqx.nn.Linear(
+            config.n_embed * 4, config.n_embed, use_bias=False, key=k2, dtype=self.dtype
+        )
+        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
+        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
+        self.attn = FlashMultiheadAttention(
+            config.n_heads,
+            config.n_embed,
+            dropout_p=config.dropout,
+            key=k3,
+            use_key_bias=False,
+            use_value_bias=False,
+            use_query_bias=False,
+            use_output_bias=False,
+            dtype=self.dtype,
         )
         self.rope = eqx.nn.RotaryPositionalEmbedding(config.n_embed, 10_000)
         self.dropout = eqx.nn.Dropout(config.dropout)
@@ -36,11 +51,11 @@ class Block(eqx.Module):
         else:
             mlp_key, attn_key = jr.split(key)
         x = eqx.filter_vmap(self.lnorm_attn)(x)
+        roped = self.rope(x)
         x = x + self.attn(
-            query=self.rope(x),
-            key_=self.rope(x),
+            query=roped,
+            key_=roped,
             value=x,
-            mask=jnp.tril(jnp.ones((x.shape[0], x.shape[0]))),
             key=attn_key,
         )
         x = x + self.dropout(
@@ -54,6 +69,7 @@ class Block(eqx.Module):
 
 class GPT(eqx.Module):
     config: GPTConfig = eqx.field(static=True)
+    dtype: jnp.dtype = eqx.field(static=True)
     tok_embed: eqx.nn.Embedding
     blocks: list[Block]
     final_norm: eqx.nn.RMSNorm
@@ -61,10 +77,15 @@ class GPT(eqx.Module):
 
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3, k4 = jr.split(key, 4)
-        self.tok_embed = eqx.nn.Embedding(config.vocab_size, config.n_embed, key=k2)
+        self.dtype = config.dtype
+        self.tok_embed = eqx.nn.Embedding(
+            config.vocab_size, config.n_embed, key=k2, dtype=self.dtype
+        )
         self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layers)]
-        self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
-        self.lm_head = eqx.nn.Linear(config.n_embed, config.vocab_size, use_bias=False, key=k4)
+        self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
+        self.lm_head = eqx.nn.Linear(
+            config.n_embed, config.vocab_size, use_bias=False, key=k4, dtype=self.dtype
+        )
         self.config = config
 
     def __call__(
@@ -82,7 +103,7 @@ class GPT(eqx.Module):
         x = eqx.filter_vmap(self.final_norm)(x)
         if targets is not None:
             logits = eqx.filter_vmap(self.lm_head)(x)
-            labels = jax.nn.one_hot(targets, self.config.vocab_size)
+            labels = jax.nn.one_hot(targets, self.config.vocab_size, dtype=self.dtype)
             log_probs = jax.nn.log_softmax(logits)
             loss = -jnp.sum(labels * log_probs) / (self.config.context_len - 1)
         else:
@@ -97,7 +118,7 @@ class GPT(eqx.Module):
             idx, key = carry
             key, subkey = jax.random.split(key)
 
-            logits, _ = forward(idx)
+            logits, _ = forward(idx, key=key)
             idx_next = jr.categorical(logits=logits, key=subkey)
 
             idx = jnp.roll(idx, -1)

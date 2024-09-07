@@ -1,5 +1,6 @@
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 
 
 class GPTConfig(eqx.Module):
@@ -7,8 +8,9 @@ class GPTConfig(eqx.Module):
     vocab_size: int = 65
     n_layers: int = 6
     n_heads: int = 6
-    n_embed: int = 368
+    n_embed: int = 384
     dropout: float = 0.2
+    dtype: jnp.dtype = jnp.bfloat16
 
     @classmethod
     def from_preset(cls, name: str):
@@ -28,7 +30,7 @@ class GPTConfig(eqx.Module):
 
 
 class TrainConfig(eqx.Module):
-    batch_size: int = 16
+    batch_size: int = 64
     lr_config: dict = eqx.field(
         default_factory=lambda: {
             "init_value": 1e-3,
@@ -67,8 +69,8 @@ class TrainConfig(eqx.Module):
 
 
 class RunConfig(eqx.Module):
-    n_devices: int = 1  # number of devices available
-    n_updates_on_device: int = 4  # how many steps to do without moving data to CPU
+    n_devices: int = 10  # number of devices available
+    n_updates_on_device: int = 1  # how many steps to do without moving data to CPU
     times_to_checkpoint: int = 2  # how many times to checkpoint throughout the training
     times_to_eval: int = 10  # how many times to eval throughout training
     n_batches_in_eval: int = 20  # how many batches in eval

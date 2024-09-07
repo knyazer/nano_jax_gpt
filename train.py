@@ -21,7 +21,7 @@ from model import GPT
 
 initialise_tracking()
 
-wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="nano_jax_gpt_test")
+wandb = WandbLogger(use_wandb=False, name="nano_jax_gpt_test")
 
 model_config: GPTConfig = GPTConfig.from_preset("chargpt")
 train_config: TrainConfig = TrainConfig.from_preset("chargpt")
@@ -101,6 +101,9 @@ def evaluate(model, X, y, sharding):
 
 def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
     model = GPT(jr.key(0), model_config)
+    n_model_params = jax.tree.map(lambda x: x.size, eqx.filter(model, eqx.is_array))
+    n_model_params = sum(jax.tree_leaves(n_model_params))
+    print(f"Model has {n_model_params/1_000_000:.2f}M parameters")
     opt_state = optim.init(eqx.filter(model, eqx.is_array))
     evals_table = []
     eval_loss = jnp.nan
@@ -129,15 +132,20 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         loading_data_time = time.time() - t
 
         # step
+        t = time.time()
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
         model, opt_state, loss = eqx.filter_jit(upd_fn, donate="all")(
             model, opt_state, X, y, fwd_key, sharding
         )
+        loss.block_until_ready()
         del X, y, fwd_key  # since donate="all" make sure to GC the vars too
+
+        step_time = (time.time() - t) / run_config.n_updates_on_device
 
         # log
         pbar.set_description(
-            f"loss:{loss.mean():.2f} / eval:{eval_loss:.2f} | loading:{loading_data_time:.2f}s"
+            f"loss:{loss.mean():.2f} / eval:{eval_loss:.2f} |"
+            f"loading:{loading_data_time:.2f}s / step:{step_time:.2f}s"
         )
         if exit_after_first_step:
             return
@@ -169,7 +177,7 @@ if __name__ == "__main__":
     optim = optax.chain(
         optax.clip_by_global_norm(train_config.global_norm),
         optax.adamw(
-            optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=1e-6
+            optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=1e-1
         ),
     )
     auto_batch_size_wrapper(
