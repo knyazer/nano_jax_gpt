@@ -12,7 +12,7 @@ import numpy as np
 import optax
 from jax.experimental import mesh_utils
 from jax_smi import initialise_tracking
-from jaxtyping import Array, Int, PRNGKeyArray
+from jaxtyping import Array, Int
 from tqdm import tqdm
 
 from configs import GPTConfig, RunConfig, TrainConfig
@@ -40,17 +40,16 @@ else:
     raise AssertionError("Unknown dataset")
 
 
-def get_batches(split: str, key: PRNGKeyArray, shape: tuple):
+def get_batches(split: str, rng: np.random.Generator, shape: tuple):
     data_dir = Path()
     if split == "train":
         data = np.memmap(data_dir / "train.bin", dtype=np.uint16, mode="r")
     else:
         data = np.memmap(data_dir / "val.bin", dtype=np.uint16, mode="r")
-    ix = jr.randint(
-        key=key,
-        minval=0,
-        maxval=len(data) - model_config.context_len,
-        shape=(int(np.prod(shape)),),
+    ix = rng.integers(
+        low=0,
+        high=len(data) - model_config.context_len,
+        size=(int(np.prod(shape)),),
     )
 
     x = np.stack([np.array(data[i : i + model_config.context_len]) for i in ix])
@@ -81,8 +80,10 @@ def upd_fn(model, opt_state, X, y, key, sharding):
     X, y = eqx.filter_shard((X, y), sharding)
 
     model_d, model_s = eqx.partition(model, eqx.is_array)
-    (model_d, opt_state, _), loss = eqxi.scan(
-        eqx.Partial(scan_fn, model_s=model_s), (model_d, opt_state, key), (X, y), kind="lax"
+    (model_d, opt_state, _), loss = jax.lax.scan(
+        eqx.Partial(scan_fn, model_s=model_s),
+        (model_d, opt_state, key),
+        (X, y),
     )
     return eqx.combine(model_d, model_s), opt_state, loss.mean()
 
@@ -106,7 +107,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
     print(f"Model has {n_model_params/1_000_000:.2f}M parameters")
     opt_state = optim.init(eqx.filter(model, eqx.is_array))
     evals_table = []
-    eval_loss = jnp.nan
+    eval_loss = float(jnp.nan)
 
     devices = mesh_utils.create_device_mesh((1, jax.device_count(), 1))  # reps x batch x data
     sharding = jshard.PositionalSharding(devices)
@@ -118,50 +119,59 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         eqx.tree_serialise_leaves(f"checkpoints/model_{i}.eqx", model)
 
     n_steps = train_config.train_for // run_config.n_updates_on_device
-    for i in (pbar := tqdm(range(n_steps))):
-        data_key, fwd_key = jr.split(jr.key(i))
-        t = time.time()
-        X, y = get_batches(
+
+    train_generator = np.random.default_rng(42)
+    eval_generator = np.random.default_rng(69)
+
+    def load_train_batches():
+        return get_batches(
             "train",
-            data_key,
+            train_generator,
             shape=(
                 run_config.n_updates_on_device,
                 batch_size,
             ),
         )
-        loading_data_time = time.time() - t
 
-        # step
+    X, y = load_train_batches()
+    for i in (pbar := tqdm(range(n_steps))):
+        data_key, fwd_key = jr.split(jr.key(i))
+
         t = time.time()
+
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
         model, opt_state, loss = eqx.filter_jit(upd_fn, donate="all")(
             model, opt_state, X, y, fwd_key, sharding
         )
-        loss.block_until_ready()
-        del X, y, fwd_key  # since donate="all" make sure to GC the vars too
-
+        X, y = load_train_batches()  # async load
+        loss = float(loss.mean())  # wait for jax to finish
         step_time = (time.time() - t) / run_config.n_updates_on_device
 
         # log
-        pbar.set_description(
-            f"loss:{loss.mean():.2f} / eval:{eval_loss:.2f} |"
-            f"loading:{loading_data_time:.2f}s / step:{step_time:.2f}s"
-        )
+        pbar.set_description(f"loss:{loss:.2f} / eval:{eval_loss:.2f} | step:{step_time*1e3:.2f}ms")
         if exit_after_first_step:
             return
-        wandb.log({"loss": loss.mean(), "step": i})
+        wandb.log({"loss": loss, "step": i})
 
         # if we want to checkpoint..
-        if i % (n_steps // run_config.times_to_checkpoint) == 1:
+        chckp_freq = n_steps // run_config.times_to_checkpoint
+        if i % chckp_freq == chckp_freq - 1:
             checkpoint(i)
 
         # if we want to eval...
-        if i % (n_steps // run_config.times_to_eval) == 1:
-            X, y = get_batches("test", jr.key(32), shape=(run_config.n_batches_in_eval, batch_size))
+        eval_freq = n_steps // run_config.times_to_eval
+        if i % eval_freq == eval_freq - 1:
+            X, y = get_batches(
+                "test", eval_generator, shape=(run_config.n_batches_in_eval, batch_size)
+            )
             X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
-            eval_loss = eqx.filter_jit(evaluate)(eqx.nn.inference_mode(model), X, y, sharding)
+            eval_loss = float(
+                eqx.filter_jit(evaluate)(eqx.nn.inference_mode(model), X, y, sharding).mean()
+            )
 
-            test_sample = get_batches("test", key=jr.key(1), shape=(1,))[0][0]
+            test_sample = get_batches("test", np.random.default_rng(11), shape=(1,))[0][
+                0
+            ]  # always the same
             out = eqx.filter_jit(model.generate)(idx=test_sample, key=jr.key(42))
             text = decode([int(x) for x in out])
             evals_table.append([i, text])

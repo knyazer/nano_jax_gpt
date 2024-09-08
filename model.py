@@ -14,7 +14,6 @@ class Block(eqx.Module):
     lnorm_attn: eqx.nn.RMSNorm
     lnorm_mlp: eqx.nn.RMSNorm
     attn: FlashMultiheadAttention
-    rope: eqx.nn.RotaryPositionalEmbedding
     dropout: eqx.nn.Dropout
     dtype: jnp.dtype
 
@@ -27,8 +26,8 @@ class Block(eqx.Module):
         self.proj_fc = eqx.nn.Linear(
             config.n_embed * 4, config.n_embed, use_bias=False, key=k2, dtype=self.dtype
         )
-        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
-        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
+        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
+        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.attn = FlashMultiheadAttention(
             config.n_heads,
             config.n_embed,
@@ -40,7 +39,6 @@ class Block(eqx.Module):
             use_output_bias=False,
             dtype=self.dtype,
         )
-        self.rope = eqx.nn.RotaryPositionalEmbedding(config.n_embed, 10_000)
         self.dropout = eqx.nn.Dropout(config.dropout)
 
     def __call__(
@@ -51,10 +49,9 @@ class Block(eqx.Module):
         else:
             mlp_key, attn_key = jr.split(key)
         x = eqx.filter_vmap(self.lnorm_attn)(x)
-        roped = self.rope(x)
         x = x + self.attn(
-            query=roped,
-            key_=roped,
+            query=x,
+            key_=x,
             value=x,
             key=attn_key,
         )
@@ -82,7 +79,7 @@ class GPT(eqx.Module):
             config.vocab_size, config.n_embed, key=k2, dtype=self.dtype
         )
         self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layers)]
-        self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
+        self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.lm_head = eqx.nn.Linear(
             config.n_embed, config.vocab_size, use_bias=False, key=k4, dtype=self.dtype
         )

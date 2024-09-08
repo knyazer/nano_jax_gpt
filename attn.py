@@ -1,8 +1,12 @@
+import einops
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-from equinox import Module, field
+from equinox import Module, field, filter_jit
 from equinox.nn import Dropout, Linear
+from jax.experimental.pallas.ops.gpu import attention as gpu_attention
+from jax.experimental.pallas.ops.tpu import flash_attention as tpu_attention
 from jaxtyping import Array, Float, PRNGKeyArray
 
 
@@ -10,6 +14,21 @@ def default_floating_dtype():
     if jax.config.jax_enable_x64:  # pyright: ignore
         return jnp.float64
     return jnp.float32
+
+
+@filter_jit
+def causal_dot_product_attention(q, k, v):
+    try:
+        if jax.device_count(backend="tpu") > 0:
+            return tpu_attention.flash_attention(q, k, v, causal=True)
+    except Exception as _:
+        ...
+    try:
+        if jax.device_count(backend="gpu") > 0:
+            return gpu_attention.mha(q, k, v, None, causal=True, block_q=32, block_k=32)
+    except Exception as _:
+        ...
+    raise NotImplementedError("Causal attention is not implemented for this backend.")
 
 
 def dot_product_attention(
@@ -21,9 +40,7 @@ def dot_product_attention(
     key: PRNGKeyArray | None = None,
     inference: bool | None = None,
 ) -> Float[Array, "q_seq v_size"]:
-    attn = jax.nn.dot_product_attention(
-        query[None, :], key_[None, :], value[None, :], is_causal=True, implementation="cudnn"
-    )
+    attn = causal_dot_product_attention(query[None, :], key_[None, :], value[None, :])
     if dropout is not None:
         attn = dropout(attn, key=key, inference=inference)
     return attn
@@ -41,12 +58,11 @@ class FlashMultiheadAttention(Module, strict=True):
     key_size: int = field(static=True)
     value_size: int = field(static=True)
     output_size: int = field(static=True)
-    qk_size: int = field(static=True)
-    vo_size: int = field(static=True)
     use_query_bias: bool = field(static=True)
     use_key_bias: bool = field(static=True)
     use_value_bias: bool = field(static=True)
     use_output_bias: bool = field(static=True)
+    rope: eqx.nn.RotaryPositionalEmbedding
 
     def __init__(
         self,
@@ -56,8 +72,6 @@ class FlashMultiheadAttention(Module, strict=True):
         key_size: int | None = None,
         value_size: int | None = None,
         output_size: int | None = None,
-        qk_size: int | None = None,
-        vo_size: int | None = None,
         use_query_bias: bool = False,
         use_key_bias: bool = False,
         use_value_bias: bool = False,
@@ -70,36 +84,31 @@ class FlashMultiheadAttention(Module, strict=True):
         dtype = default_floating_dtype() if dtype is None else dtype
         qkey, kkey, vkey, okey = jrandom.split(key, 4)
 
+        self.rope = eqx.nn.RotaryPositionalEmbedding(query_size // num_heads, 10_000)
         if key_size is None:
             key_size = query_size
         if value_size is None:
             value_size = query_size
-        if qk_size is None:
-            qk_size = query_size // num_heads
-        if vo_size is None:
-            vo_size = query_size // num_heads
         if output_size is None:
             output_size = query_size
 
         self.query_proj = Linear(
             query_size,
-            num_heads * qk_size,
+            query_size,
             use_bias=use_query_bias,
             dtype=dtype,
             key=qkey,
         )
-        self.key_proj = Linear(
-            key_size, num_heads * qk_size, use_bias=use_key_bias, dtype=dtype, key=kkey
-        )
+        self.key_proj = Linear(key_size, key_size, use_bias=use_key_bias, dtype=dtype, key=kkey)
         self.value_proj = Linear(
             value_size,
-            num_heads * vo_size,
+            value_size,
             use_bias=use_value_bias,
             dtype=dtype,
             key=vkey,
         )
         self.output_proj = Linear(
-            num_heads * vo_size,
+            query_size,
             output_size,
             use_bias=use_output_bias,
             dtype=dtype,
@@ -112,8 +121,6 @@ class FlashMultiheadAttention(Module, strict=True):
         self.key_size = key_size
         self.value_size = value_size
         self.output_size = output_size
-        self.qk_size = qk_size
-        self.vo_size = vo_size
         self.use_query_bias = use_query_bias
         self.use_key_bias = use_key_bias
         self.use_value_bias = use_value_bias
@@ -138,6 +145,16 @@ class FlashMultiheadAttention(Module, strict=True):
         query_heads = self._project(self.query_proj, query)
         key_heads = self._project(self.key_proj, key_)
         value_heads = self._project(self.value_proj, value)
+
+        shape_before = query_heads.shape
+
+        query_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(query_heads)
+        key_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(key_heads)
+
+        query_heads = einops.rearrange(query_heads, "num_heads seq embed -> seq num_heads embed")
+        key_heads = einops.rearrange(key_heads, "num_heads seq embed -> seq num_heads embed")
+
+        assert query_heads.shape == shape_before
 
         attn_key = key if key is not None else None
         attn = dot_product_attention(
