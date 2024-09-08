@@ -48,7 +48,7 @@ def get_batches(split: str, rng: np.random.Generator, shape: tuple):
         data = np.memmap(data_dir / "val.bin", dtype=np.uint16, mode="r")
     ix = rng.integers(
         low=0,
-        high=len(data) - model_config.context_len,
+        high=len(data) - model_config.context_len - 1,
         size=(int(np.prod(shape)),),
     )
 
@@ -98,13 +98,32 @@ def evaluate(model, X, y, sharding):
     return losses.mean()
 
 
+evals_table = []
+
+
+def eval_fn(model, eval_generator, batch_size, sharding):
+    eval_x, eval_y = get_batches(
+        "test", eval_generator, shape=(run_config.n_batches_in_eval, batch_size)
+    )
+    eval_x, eval_y = eqx.filter_shard((jnp.array(eval_x), jnp.array(eval_y)), sharding)
+    eval_loss = float(
+        eqx.filter_jit(evaluate)(eqx.nn.inference_mode(model), eval_x, eval_y, sharding).mean()
+    )
+
+    test_sample = get_batches("test", np.random.default_rng(11), shape=(1,))[0][0]
+    out = eqx.filter_jit(model.generate)(idx=test_sample, key=jr.key(42))
+    text = decode([int(x) for x in out])
+    evals_table.append([text])
+    wandb.log({"text": wandb.Table(["text"], data=evals_table), "eval_loss": eval_loss})
+    return eval_loss
+
+
 def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
     model = GPT(jr.key(0), model_config)
     n_model_params = jax.tree.map(lambda x: x.size, eqx.filter(model, eqx.is_array))
     n_model_params = sum(jax.tree_leaves(n_model_params))
     print(f"Model has {n_model_params/1_000_000:.2f}M parameters")
     opt_state = optim.init(eqx.filter(model, eqx.is_array))
-    evals_table = []
     eval_loss = float(jnp.nan)
 
     devices = mesh_utils.create_device_mesh((1, jax.device_count(), 1))  # reps x batch x data
@@ -149,7 +168,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         pbar.set_description(f"loss:{loss:.2f} / eval:{eval_loss:.2f} | step:{step_time*1e3:.2f}ms")
         if exit_after_first_step:
             return
-        wandb.log({"loss": loss, "step": i})
+        wandb.log({"loss": loss})
 
         # if we want to checkpoint..
         chckp_freq = n_steps // run_config.times_to_checkpoint
@@ -159,24 +178,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         # if we want to eval...
         eval_freq = n_steps // run_config.times_to_eval
         if i % eval_freq == eval_freq - 1:
-            X, y = get_batches(
-                "test", eval_generator, shape=(run_config.n_batches_in_eval, batch_size)
-            )
-            X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
-            eval_loss = float(
-                eqx.filter_jit(evaluate)(eqx.nn.inference_mode(model), X, y, sharding).mean()
-            )
-
-            test_sample = get_batches("test", np.random.default_rng(11), shape=(1,))[0][
-                0
-            ]  # always the same
-            out = eqx.filter_jit(model.generate)(idx=test_sample, key=jr.key(42))
-            text = decode([int(x) for x in out])
-            evals_table.append([i, text])
-            wandb.log(
-                {"text": wandb.Table(["step", "text"], data=evals_table), "eval_loss": eval_loss},
-                commit=True,
-            )
+            eval_loss = eval_fn(model, eval_generator, batch_size, sharding)
 
     checkpoint(train_config.train_for // run_config.n_updates_on_device)
 

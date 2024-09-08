@@ -26,8 +26,8 @@ class Block(eqx.Module):
         self.proj_fc = eqx.nn.Linear(
             config.n_embed * 4, config.n_embed, use_bias=False, key=k2, dtype=self.dtype
         )
-        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
-        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
+        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
+        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.attn = FlashMultiheadAttention(
             config.n_heads,
             config.n_embed,
@@ -48,16 +48,18 @@ class Block(eqx.Module):
             mlp_key, attn_key = None, None
         else:
             mlp_key, attn_key = jr.split(key)
-        x = eqx.filter_vmap(self.lnorm_attn)(x)
+        x_normed = eqx.filter_vmap(self.lnorm_attn)(x).astype(self.dtype)
         x = x + self.attn(
-            query=x,
-            key_=x,
-            value=x,
+            query=x_normed,
+            key_=x_normed,
+            value=x_normed,
             key=attn_key,
         )
         x = x + self.dropout(
             eqx.filter_vmap(
-                lambda tok: self.lnorm_mlp(self.proj_fc(jax.nn.gelu(self.expand_fc(tok))))
+                lambda tok: self.proj_fc(
+                    jax.nn.gelu(self.expand_fc(self.lnorm_mlp(tok).astype(self.dtype)))
+                )
             )(x),
             key=mlp_key,
         )
@@ -79,7 +81,7 @@ class GPT(eqx.Module):
             config.vocab_size, config.n_embed, key=k2, dtype=self.dtype
         )
         self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layers)]
-        self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
+        self.final_norm = eqx.nn.RMSNorm(config.n_embed)
         self.lm_head = eqx.nn.Linear(
             config.n_embed, config.vocab_size, use_bias=False, key=k4, dtype=self.dtype
         )
@@ -97,7 +99,7 @@ class GPT(eqx.Module):
         keys = jr.split(key, len(self.blocks))
         for block, bkey in zip(self.blocks, keys):  # todo: scan over layers
             x = block(x, key=bkey)
-        x = eqx.filter_vmap(self.final_norm)(x)
+        x = eqx.filter_vmap(self.final_norm)(x).astype(self.dtype)
         if targets is not None:
             logits = eqx.filter_vmap(self.lm_head)(x)
             labels = jax.nn.one_hot(targets, self.config.vocab_size, dtype=self.dtype)
