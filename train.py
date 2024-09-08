@@ -21,7 +21,7 @@ from model import GPT
 
 initialise_tracking()
 
-wandb = WandbLogger(use_wandb=False, name="nano_jax_gpt_test")
+wandb = WandbLogger(use_wandb=True, name="nano_jax_gpt_test_2")
 
 model_config: GPTConfig = GPTConfig.from_preset("chargpt")
 train_config: TrainConfig = TrainConfig.from_preset("chargpt")
@@ -81,9 +81,7 @@ def upd_fn(model, opt_state, X, y, key, sharding):
 
     model_d, model_s = eqx.partition(model, eqx.is_array)
     (model_d, opt_state, _), loss = jax.lax.scan(
-        eqx.Partial(scan_fn, model_s=model_s),
-        (model_d, opt_state, key),
-        (X, y),
+        eqx.Partial(scan_fn, model_s=model_s), (model_d, opt_state, key), (X, y)
     )
     return eqx.combine(model_d, model_s), opt_state, loss.mean()
 

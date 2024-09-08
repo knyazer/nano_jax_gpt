@@ -26,8 +26,8 @@ class Block(eqx.Module):
         self.proj_fc = eqx.nn.Linear(
             config.n_embed * 4, config.n_embed, use_bias=False, key=k2, dtype=self.dtype
         )
-        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
-        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
+        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
+        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
         self.attn = FlashMultiheadAttention(
             config.n_heads,
             config.n_embed,
@@ -79,7 +79,7 @@ class GPT(eqx.Module):
             config.vocab_size, config.n_embed, key=k2, dtype=self.dtype
         )
         self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layers)]
-        self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
+        self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False, dtype=self.dtype)
         self.lm_head = eqx.nn.Linear(
             config.n_embed, config.vocab_size, use_bias=False, key=k4, dtype=self.dtype
         )
