@@ -21,14 +21,15 @@ def causal_dot_product_attention(q, k, v):
     try:
         if jax.device_count(backend="tpu") > 0:
             return tpu_attention.flash_attention(q, k, v, causal=True)
-    except Exception as _:
-        ...
+    except Exception as e:
+        print(f"Silenced exception: {e}")
+
     try:
         if jax.device_count(backend="gpu") > 0:
             return gpu_attention.mha(q, k, v, None, causal=True, block_q=32, block_k=32)
-    except Exception as _:
-        ...
-    raise NotImplementedError("Causal attention is not implemented for this backend.")
+    except Exception as e:
+        print(f"Silenced exception: {e}")
+    raise NotImplementedError("Causal attention is not implemented for the current backend.")
 
 
 def dot_product_attention(
