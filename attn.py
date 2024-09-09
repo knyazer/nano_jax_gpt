@@ -20,6 +20,9 @@ def default_floating_dtype():
 def causal_dot_product_attention(q, k, v):
     try:
         if jax.device_count(backend="tpu") > 0:
+            q = einops.rearrange(q, "b seq head embed -> b head seq embed")
+            k = einops.rearrange(k, "b seq head embed -> b head seq embed")
+            v = einops.rearrange(v, "b seq head embed -> b head seq embed")
             return tpu_attention.flash_attention(q, k, v, causal=True)
     except Exception as e:
         print(f"Silenced exception: {e}")
@@ -29,6 +32,7 @@ def causal_dot_product_attention(q, k, v):
             return gpu_attention.mha(q, k, v, None, causal=True, block_q=32, block_k=32)
     except Exception as e:
         print(f"Silenced exception: {e}")
+
     raise NotImplementedError("Causal attention is not implemented for the current backend.")
 
 
