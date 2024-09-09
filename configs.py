@@ -53,15 +53,13 @@ class TrainConfig(eqx.Module):
                 return TrainConfig(
                     batch_size=512,  # from gpt2 paper
                     train_for=600_000,
-                    lr_config=eqx.field(
-                        default_factory=lambda: {
-                            "init_value": 6e-4,
-                            "peak_value": 6e-4,
-                            "warmup_steps": 1000,
-                            "decay_steps": 600_000,
-                            "end_value": 6e-5,
-                        }
-                    ),
+                    lr_config={
+                        "init_value": 6e-4,
+                        "peak_value": 6e-4,
+                        "warmup_steps": 1000,
+                        "decay_steps": 600_000,
+                        "end_value": 6e-5,
+                    },
                     dataset_name="openwebtext",
                 )
             case _:
@@ -84,6 +82,6 @@ class RunConfig(eqx.Module):
             case "chargpt":
                 return RunConfig()
             case "gpt2":
-                return RunConfig(times_to_eval=100, times_to_checkpoint=50)
+                return RunConfig(times_to_eval=20, times_to_checkpoint=10)
             case _:
                 raise AssertionError("Only 'chargpt' or 'gpt2' are allowed as presets!")

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+sudo killall tmux:\ server
+
 # Start a new tmux session called "my_tpu_session"
 tmux new-session -d -s my_tpu_session
 
