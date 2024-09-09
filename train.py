@@ -21,7 +21,7 @@ from model import GPT
 
 initialise_tracking()
 
-wandb = WandbLogger(use_wandb=True, name="nano_jax_gpt_test_2")
+wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="nano_jax_gpt_test_2")
 
 model_config: GPTConfig = GPTConfig.from_preset("chargpt")
 train_config: TrainConfig = TrainConfig.from_preset("chargpt")
