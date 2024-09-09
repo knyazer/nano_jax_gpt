@@ -1,5 +1,3 @@
-from functools import partial
-
 import einops
 import equinox as eqx
 import jax
@@ -7,7 +5,6 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from equinox import Module, field, filter_jit
 from equinox.nn import Dropout, Linear
-from jax.experimental import shard_map
 from jax.experimental.pallas.ops.gpu import attention as gpu_attention
 from jax.experimental.pallas.ops.tpu import flash_attention as tpu_attention
 from jaxtyping import Array, Float, PRNGKeyArray
@@ -19,42 +16,14 @@ def default_floating_dtype():
     return jnp.float32
 
 
-# inspired by https://github.com/google/maxtext/blob/10a7c473e9feb1107894e7588b283b1bcfcbd679/MaxText/layers/attentions.py#L213 # noqa
-def tpu_flash_attention(self, q: Array, k: Array, v: Array) -> Array:
-    """TPU Flash Attention."""
-    q = einops.rearrange(q, "batch seq head embed -> batch head seq embed")
-    k = einops.rearrange(k, "batch seq head embed -> batch head seq embed")
-    v = einops.rearrange(v, "batch seq head embed -> batch head seq embed")
-    axis_names = "a"
-
-    @partial(
-        shard_map.shard_map,
-        mesh=self.mesh,
-        in_specs=(
-            axis_names,
-            axis_names,
-            axis_names,
-        ),
-        out_specs=axis_names,
-        check_rep=False,
-    )
-    def attn_sharded(query, key, value):
-        q = query.array
-        k = key.array
-        v = value.array
-        y, _, _ = tpu_attention.flash_attention(q, k, v, causal=True)
-        return y
-
-    y = attn_sharded(q, k, v)
-
-    return y
-
-
 @filter_jit
 def causal_dot_product_attention(q, k, v):
     try:
         if jax.device_count(backend="tpu") > 0:
-            return tpu_flash_attention(q, k, v)
+            q = einops.rearrange(q, "batch seq head embed -> batch head seq embed")
+            k = einops.rearrange(k, "batch seq head embed -> batch head seq embed")
+            v = einops.rearrange(v, "batch seq head embed -> batch head seq embed")
+            return tpu_attention.mha_reference(q, k, v, causal=True)
     except Exception as e:
         print(f"Silenced exception: {e}")
 
