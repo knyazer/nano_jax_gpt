@@ -23,7 +23,7 @@ def causal_dot_product_attention(q, k, v):
             q = einops.rearrange(q, "batch seq head embed -> batch head seq embed")
             k = einops.rearrange(k, "batch seq head embed -> batch head seq embed")
             v = einops.rearrange(v, "batch seq head embed -> batch head seq embed")
-            return tpu_attention.mha_reference(q, k, v, causal=True)
+            return tpu_attention.mha_reference(q, k, v, None, causal=True)
     except Exception as e:
         print(f"Silenced exception: {e}")
 
