@@ -3,7 +3,6 @@ import time
 
 import equinox as eqx
 import jax
-
 import wandb
 
 
