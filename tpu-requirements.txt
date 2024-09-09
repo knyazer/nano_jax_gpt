@@ -1,0 +1,9 @@
+jax[tpu]
+tqdm
+optax
+equinox
+einops
+datasets
+tiktoken
+wandb
+jax-smi

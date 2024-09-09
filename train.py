@@ -187,7 +187,7 @@ if __name__ == "__main__":
     optim = optax.chain(
         optax.clip_by_global_norm(train_config.global_norm),
         optax.adamw(
-            optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=1e-1
+            optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=3e-1
         ),
     )
     auto_batch_size_wrapper(
