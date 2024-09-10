@@ -22,7 +22,7 @@ from model import GPT
 
 initialise_tracking()
 
-wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="nano_jax_gpt_test_2")
+wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="singleblock")
 
 parser = argparse.ArgumentParser(description="Script to run with a model argument")
 parser.add_argument(
