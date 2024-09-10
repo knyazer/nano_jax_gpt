@@ -6,7 +6,6 @@ import jax.random as jrandom
 from equinox import Module, field, filter_jit
 from equinox.nn import Dropout, Linear
 from jax.experimental.pallas.ops.gpu import attention as gpu_attention
-from jax.experimental.pallas.ops.tpu import flash_attention as tpu_attention
 from jax.nn import dot_product_attention as fallback_dot_product_attention
 from jaxtyping import Array, Float, PRNGKeyArray
 
@@ -20,18 +19,12 @@ def default_floating_dtype():
 @filter_jit
 def causal_dot_product_attention(q, k, v):
     try:
-        if jax.device_count(backend="tpu") > 0:
-            return fallback_dot_product_attention(q, k, v, is_causal=True)
-    except Exception as e:
-        print(f"Silenced exception: {e}")
-
-    try:
         if jax.device_count(backend="gpu") > 0:
             return gpu_attention.mha(q, k, v, None, causal=True, block_q=32, block_k=32)
-    except Exception as e:
-        print(f"Silenced exception: {e}")
+    except Exception:
+        ...
 
-    raise NotImplementedError("Causal attention is not implemented for the current backend.")
+    return fallback_dot_product_attention(q, k, v, is_causal=True)
 
 
 def dot_product_attention(

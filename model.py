@@ -55,12 +55,13 @@ class Block(eqx.Module):
             value=x_normed,
             key=attn_key,
         )
+
+        def _mlp(x):
+            x_expanded = self.expand_fc(self.lnorm_mlp(x).astype(self.dtype))
+            return self.proj_fc(jax.nn.gelu(x_expanded))
+
         x = x + self.dropout(
-            eqx.filter_vmap(
-                lambda tok: self.proj_fc(
-                    jax.nn.gelu(self.expand_fc(self.lnorm_mlp(tok).astype(self.dtype)))
-                )
-            )(x),
+            eqx.filter_vmap(_mlp)(x),
             key=mlp_key,
         )
         return x
@@ -81,7 +82,7 @@ class GPT(eqx.Module):
             config.vocab_size, config.n_embed, key=k2, dtype=self.dtype
         )
         self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layers)]
-        self.final_norm = eqx.nn.RMSNorm(config.n_embed)
+        self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False, use_weight=False)
         self.lm_head = eqx.nn.Linear(
             config.n_embed, config.vocab_size, use_bias=False, key=k4, dtype=self.dtype
         )

@@ -1,3 +1,4 @@
+import argparse
 import time
 from pathlib import Path
 
@@ -23,9 +24,20 @@ initialise_tracking()
 
 wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="nano_jax_gpt_test_2")
 
-model_config: GPTConfig = GPTConfig.from_preset("gpt2")
-train_config: TrainConfig = TrainConfig.from_preset("gpt2")
-run_config: RunConfig = RunConfig.from_preset("gpt2")
+parser = argparse.ArgumentParser(description="Script to run with a model argument")
+parser.add_argument(
+    "--model",
+    type=str,
+    choices=["gpt2", "chargpt"],
+    default="chargpt",
+    help="Specify the model to use (gpt2 or chargpt). Default is chargpt.",
+)
+args = parser.parse_args()
+
+
+model_config: GPTConfig = GPTConfig.from_preset(args.model)
+train_config: TrainConfig = TrainConfig.from_preset(args.model)
+run_config: RunConfig = RunConfig.from_preset(args.model)
 
 if train_config.dataset_name == "shakespear-char":
     from prepare_shakespear import decode  # type: ignore
@@ -187,7 +199,7 @@ if __name__ == "__main__":
     optim = optax.chain(
         optax.clip_by_global_norm(train_config.global_norm),
         optax.adamw(
-            optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=2e-2
+            optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=1e-2
         ),
     )
     auto_batch_size_wrapper(
