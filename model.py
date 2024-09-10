@@ -16,16 +16,20 @@ class Block(eqx.Module):
     attn: FlashMultiheadAttention
     dropout: eqx.nn.Dropout
     dtype: jnp.dtype
+    embed_mlp: eqx.nn.Embedding
+    embed_attn: eqx.nn.Embedding
 
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
-        k1, k2, k3 = jr.split(key, 3)
+        k1, k2, k3, k4 = jr.split(key, 4)
         self.dtype = config.dtype
         self.expand_fc = eqx.nn.Linear(
             config.n_embed, 4 * config.n_embed, use_bias=False, key=k1, dtype=self.dtype
         )
         self.proj_fc = eqx.nn.Linear(
-            config.n_embed * 4, config.n_embed, use_bias=False, key=k2, dtype=self.dtype
+            config.n_embed * 5, config.n_embed, use_bias=False, key=k2, dtype=self.dtype
         )
+        self.embed_mlp = eqx.nn.Embedding(6, config.n_embed * 4, key=k4)
+        self.embed_attn = eqx.nn.Embedding(6, config.n_embed, key=k4)
         self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
         self.attn = FlashMultiheadAttention(
@@ -42,7 +46,7 @@ class Block(eqx.Module):
         self.dropout = eqx.nn.Dropout(config.dropout)
 
     def __call__(
-        self, x: Float[Array, "ctx emb"], key: PRNGKeyArray | None = None
+        self, x: Float[Array, "ctx emb"], it: int, key: PRNGKeyArray | None = None
     ) -> Float[Array, "ctx emb"]:
         if key is None:
             mlp_key, attn_key = None, None
@@ -56,9 +60,11 @@ class Block(eqx.Module):
             key=attn_key,
         )
 
+        embed_mlp = self.embed_mlp(it) * 1e-2
+
         def _mlp(x):
             x_expanded = self.expand_fc(self.lnorm_mlp(x).astype(self.dtype))
-            return self.proj_fc(jax.nn.gelu(x_expanded))
+            return self.proj_fc(jax.nn.gelu(jnp.concatenate((x_expanded + embed_mlp, x))))
 
         x = x + self.dropout(
             eqx.filter_vmap(_mlp)(x),
@@ -98,8 +104,8 @@ class GPT(eqx.Module):
         if key is None:
             key = jr.PRNGKey(0)  # inference, i guess, so dummy key
         keys = jr.split(key, len(self.blocks))
-        for block, bkey in zip(self.blocks, keys):  # todo: scan over layers
-            x = block(x, key=bkey)
+        for it, (_, bkey) in enumerate(zip(self.blocks, keys)):  # todo: scan over layers
+            x = self.blocks[0](x, it, key=bkey)
         x = eqx.filter_vmap(self.final_norm)(x).astype(self.dtype)
         if targets is not None:
             logits = eqx.filter_vmap(self.lm_head)(x)
