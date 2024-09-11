@@ -25,7 +25,7 @@ initialise_tracking()
 # enable compilation cache
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")  # noqa
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.1)
 
 wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="nano_jax_gpt_test_2")
 
@@ -151,8 +151,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
     def checkpoint(i):
         Path("checkpoints").mkdir(exist_ok=True)
         eqx.tree_serialise_leaves(f"checkpoints/model_{i}.eqx", model)
-
-        wandb.log_artifact("chk", f"checkpoints/models_{i}.eqx")
+        wandb.log_artifact("chk", f"checkpoints/model_{i}.eqx")
 
     n_steps = train_config.train_for // run_config.n_updates_on_device
 
