@@ -22,6 +22,11 @@ from model import GPT
 
 initialise_tracking()
 
+# enable compilation cache
+jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")  # noqa
+jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+
 wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="nano_jax_gpt_test_2")
 
 parser = argparse.ArgumentParser(description="Script to run with a model argument")
