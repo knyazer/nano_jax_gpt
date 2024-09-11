@@ -147,7 +147,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         Path("checkpoints").mkdir(exist_ok=True)
         eqx.tree_serialise_leaves(f"checkpoints/model_{i}.eqx", model)
 
-        wandb.log_artifact(f"checkpoints/models_{i}.eqx", name="chk", type="model")
+        wandb.log_artifact("chk", f"checkpoints/models_{i}.eqx")
 
     n_steps = train_config.train_for // run_config.n_updates_on_device
 

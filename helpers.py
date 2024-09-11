@@ -65,8 +65,10 @@ class WandbLogger:
     def Table(self, *args, **kwargs):  # noqa
         return wandb.Table(*args, **kwargs)
 
-    def log_artifact(self, *args, **kwargs):
-        return wandb.log_artifact(*args, **kwargs)
+    def log_artifact(self, name, path):
+        artifact = wandb.Artifact(name=name, type="model")
+        artifact.add_file(local_path=path, name=f"model:{path}")
+        artifact.save()
 
     def log(self, *args, **kwargs):
         if self.use_wandb:
