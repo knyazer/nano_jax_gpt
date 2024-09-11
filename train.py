@@ -150,7 +150,8 @@ def main():
     optim = optax.chain(
         optax.clip_by_global_norm(train_config.global_norm),
         optax.adamw(
-            optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=1e-1
+            optax.warmup_cosine_decay_schedule(**train_config.lr_config),
+            weight_decay=train_config.weight_decay,
         ),
     )
     model = GPT(jr.key(0), model_config)

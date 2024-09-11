@@ -41,6 +41,7 @@ class TrainConfig(eqx.Module):
             "end_value": 1e-4,
         }
     )
+    weight_decay: float = 1e-2
     global_norm: float = 1.0
     train_for: int = 5000
     dataset_name: str = "shakespear-char"
