@@ -146,11 +146,11 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
     return eval_loss
 
 
-def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
+def main():
     optim = optax.chain(
         optax.clip_by_global_norm(train_config.global_norm),
         optax.adamw(
-            optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=1e-2
+            optax.warmup_cosine_decay_schedule(**train_config.lr_config), weight_decay=1e-1
         ),
     )
     model = GPT(jr.key(0), model_config)
@@ -184,7 +184,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
             train_generator,
             shape=(
                 train_config.n_grad_accumulation,
-                batch_size,
+                train_config.batch_size,
             ),
         )
 
@@ -203,8 +203,6 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         pbar.set_description(
             f"loss:{loss:.2f} / eval:{eval_loss:.2f} | step:{(time.time() - t)*1e3:.2f}ms"
         )
-        if exit_after_first_step:
-            return
         wandb.log({"loss": loss})
 
         # if we want to checkpoint..
@@ -215,7 +213,9 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         # if we want to eval...
         eval_freq = train_config.train_for // run_config.times_to_eval
         if i % eval_freq == eval_freq - 1:
-            eval_loss = eval_fn(eqx.nn.inference_mode(model), eval_generator, batch_size, sharding)
+            eval_loss = eval_fn(
+                eqx.nn.inference_mode(model), eval_generator, train_config.batch_size, sharding
+            )
 
     # checkpoint the final model
     checkpoint(train_config.train_for)
