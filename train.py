@@ -127,7 +127,7 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
 
         # accumulate loss for requested number of batches
         _, losses = jax.lax.scan(
-            eqx.Partial(lambda _, data: loss_fn(model, *data, key=None)), None, (X, y)
+            eqx.Partial(lambda _, data: (None, loss_fn(model, *data, key=None))), None, (X, y)
         )
         return losses.mean()  # return the mean
 
