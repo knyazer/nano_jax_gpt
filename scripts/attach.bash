@@ -1,6 +1,6 @@
 #!/bin/bash
 
-sudo killall tmux:\ server
+sudo killall -9 tmux:\ server
 
 sleep 1
 
