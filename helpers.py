@@ -3,6 +3,7 @@ import time
 
 import equinox as eqx
 import jax
+
 import wandb
 
 
@@ -63,6 +64,9 @@ class WandbLogger:
 
     def Table(self, *args, **kwargs):  # noqa
         return wandb.Table(*args, **kwargs)
+
+    def log_artifact(self, *args, **kwargs):
+        return wandb.log_artifact(*args, **kwargs)
 
     def log(self, *args, **kwargs):
         if self.use_wandb:
