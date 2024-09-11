@@ -13,7 +13,7 @@ import numpy as np
 import optax
 from jax.experimental import mesh_utils
 from jax_smi import initialise_tracking
-from jaxtyping import Array, Int
+from jaxtyping import Array, Int, PRNGKeyArray
 from tqdm import tqdm
 
 from configs import GPTConfig, RunConfig, TrainConfig
@@ -22,12 +22,17 @@ from model import GPT
 
 initialise_tracking()
 
+# enable fast rng keys, unstable; current jax version: 0.4.31 (check the uv lock file)
+# when I am running on TPU I install nightly, so I don't know what exact commit it will be.
+# To figure it out, just look up the time of the run in the logs and check the commit at that time.
+jax.config.update("jax_threefry_partitionable", True)  # noqa
+
 # enable compilation cache
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")  # noqa
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.1)
 
-wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="nano_jax_gpt_test_2")
+wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name="smol-chargpt")
 
 parser = argparse.ArgumentParser(description="Script to run with a model argument")
 parser.add_argument(
@@ -78,15 +83,28 @@ def get_batches(split: str, rng: np.random.Generator, shape: tuple):
 
 
 @eqx.filter_value_and_grad
-def loss_fn(model, X: Int[Array, "batch ctx"], y: Int[Array, "batch ctx"], key):
+def loss_fn(model: GPT, X: Int[Array, "batch ctx"], y: Int[Array, "batch ctx"], key: PRNGKeyArray):
     return eqx.filter_vmap(model)(X, y, key)[1].mean()
 
 
-def scan_fn(carry, data, model_s):
+def grad_acc_scan_fn(key: PRNGKeyArray, data: tuple, model: GPT):
+    X, y = data
+    loss, grads = loss_fn(model, X, y, jr.split(key, X.shape[:-1]))
+    return jr.split(key)[0], (loss, grads)
+
+
+def update_scan_fn(carry: tuple, data: tuple, model_s: GPT):
     model_d, opt_state, key = carry
     model = eqx.combine(model_d, model_s)
     X, y = data
-    loss, grads = loss_fn(model, X, y, jr.split(key, X.shape[:-1]))
+
+    _, (loss, grads) = eqxi.scan(
+        eqx.Partial(grad_acc_scan_fn, model=model), key, (X, y), kind="lax"
+    )
+
+    loss = jax.tree.map(lambda x: jnp.mean(x), loss, is_leaf=eqx.is_inexact_array)
+    grads = jax.tree.map(lambda x: jnp.mean(x, axis=0), grads, is_leaf=eqx.is_inexact_array)
+
     updates, opt_state = optim.update(grads, opt_state, model)
     model = eqx.apply_updates(model, updates)
     return (eqx.partition(model, eqx.is_array)[0], opt_state, jr.split(key)[0]), loss
@@ -98,7 +116,7 @@ def upd_fn(model, opt_state, X, y, key, sharding):
 
     model_d, model_s = eqx.partition(model, eqx.is_array)
     (model_d, opt_state, _), loss = jax.lax.scan(
-        eqx.Partial(scan_fn, model_s=model_s), (model_d, opt_state, key), (X, y)
+        eqx.Partial(update_scan_fn, model_s=model_s), (model_d, opt_state, key), (X, y)
     )
     return eqx.combine(model_d, model_s), opt_state, loss.mean()
 
@@ -118,17 +136,15 @@ def evaluate(model, X, y, sharding):
 evals_table = []
 
 
-def eval_fn(model, eval_generator, batch_size, sharding):
+def eval_fn(inference_model, eval_generator, batch_size, sharding):
     eval_x, eval_y = get_batches(
         "test", eval_generator, shape=(run_config.n_batches_in_eval, batch_size)
     )
     eval_x, eval_y = eqx.filter_shard((jnp.array(eval_x), jnp.array(eval_y)), sharding)
-    eval_loss = float(
-        eqx.filter_jit(evaluate)(eqx.nn.inference_mode(model), eval_x, eval_y, sharding).mean()
-    )
+    eval_loss = float(eqx.filter_jit(evaluate)(inference_model, eval_x, eval_y, sharding).mean())
 
     test_sample = get_batches("test", np.random.default_rng(11), shape=(1,))[0][0]
-    out = eqx.filter_jit(model.generate)(idx=test_sample, key=jr.key(42))
+    out = eqx.filter_jit(inference_model.generate)(idx=test_sample, key=jr.key(42))
     text = decode([int(x) for x in out])
     evals_table.append([text])
     wandb.log({"text": wandb.Table(["text"], data=evals_table), "eval_loss": eval_loss})
@@ -143,7 +159,9 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
     opt_state = optim.init(eqx.filter(model, eqx.is_array))
     eval_loss = float(jnp.nan)
 
-    devices = mesh_utils.create_device_mesh((1, jax.device_count(), 1))  # reps x batch x data
+    devices = mesh_utils.create_device_mesh(
+        (1, 1, jax.device_count(), 1)
+    )  # reps x accum x batch x data
     sharding = jshard.PositionalSharding(devices)
     replicated = sharding.replicate()
     model = eqx.filter_shard(model, replicated)
@@ -164,6 +182,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
             train_generator,
             shape=(
                 run_config.n_updates_on_device,
+                train_config.n_grad_accumulation,
                 batch_size,
             ),
         )
@@ -196,7 +215,7 @@ def main(batch_size=train_config.batch_size, *, exit_after_first_step=False):
         # if we want to eval...
         eval_freq = n_steps // run_config.times_to_eval
         if i % eval_freq == eval_freq - 1:
-            eval_loss = eval_fn(model, eval_generator, batch_size, sharding)
+            eval_loss = eval_fn(eqx.nn.inference_mode(model), eval_generator, batch_size, sharding)
 
     checkpoint(train_config.train_for // run_config.n_updates_on_device)
 
