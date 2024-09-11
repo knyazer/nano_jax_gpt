@@ -51,7 +51,7 @@ class TrainConfig(eqx.Module):
                 return TrainConfig()
             case "gpt2":
                 return TrainConfig(
-                    batch_size=512,  # from gpt2 paper
+                    batch_size=128,  # from gpt2 paper
                     train_for=600_000,
                     lr_config={
                         "init_value": 6e-4,
