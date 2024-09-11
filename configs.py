@@ -69,7 +69,7 @@ class TrainConfig(eqx.Module):
 class RunConfig(eqx.Module):
     n_devices: int = 1  # number of devices available
     n_updates_on_device: int = 4  # how many steps to do without moving data to CPU
-    times_to_checkpoint: int = 200  # how many times to checkpoint throughout the training
+    times_to_checkpoint: int = 2  # how many times to checkpoint throughout the training
     times_to_eval: int = 10  # how many times to eval throughout training
     n_batches_in_eval: int = 20  # how many batches in eval
 
@@ -82,6 +82,6 @@ class RunConfig(eqx.Module):
             case "chargpt":
                 return RunConfig()
             case "gpt2":
-                return RunConfig(times_to_eval=20, times_to_checkpoint=10)
+                return RunConfig(times_to_eval=100, times_to_checkpoint=10, n_batches_in_eval=50)
             case _:
                 raise AssertionError("Only 'chargpt' or 'gpt2' are allowed as presets!")
