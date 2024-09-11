@@ -24,6 +24,7 @@ class GPTConfig(eqx.Module):
                     n_embed=768,
                     n_layers=12,
                     n_heads=12,
+                    dropout=0.0,
                 )
             case _:
                 raise AssertionError("Only 'chargpt' or 'gpt2' are allowed as presets!")
