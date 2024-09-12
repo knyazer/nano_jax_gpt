@@ -98,7 +98,9 @@ class GPT(eqx.Module):
         targets: Int[Array, "ctx"] | None = None,
         key: PRNGKeyArray | None = None,
     ):
-        x = eqx.filter_vmap(self.tok_embed)(idx) + eqx.filter_vmap(self.pos_embed)(jnp.arange(idx))
+        x = eqx.filter_vmap(self.tok_embed)(idx) + eqx.filter_vmap(self.pos_embed)(
+            jnp.arange(len(idx))
+        )
         if key is None:
             key = jr.PRNGKey(0)  # inference, i guess, so dummy key
         keys = jr.split(key, len(self.blocks))
