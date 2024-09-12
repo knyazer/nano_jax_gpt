@@ -144,8 +144,8 @@ class FlashMultiheadAttention(Module, strict=True):
 
         shape_before = query_heads.shape
 
-        query_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(query_heads)
-        key_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(key_heads)
+        # query_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(query_heads) # noqa
+        # key_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(key_heads) # noqa
 
         query_heads = einops.rearrange(query_heads, "num_heads seq embed -> seq num_heads embed")
         key_heads = einops.rearrange(key_heads, "num_heads seq embed -> seq num_heads embed")

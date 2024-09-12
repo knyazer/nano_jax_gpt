@@ -71,6 +71,7 @@ class GPT(eqx.Module):
     config: GPTConfig = eqx.field(static=True)
     dtype: jnp.dtype = eqx.field(static=True)
     tok_embed: eqx.nn.Embedding
+    pos_embed: eqx.nn.Embedding
     blocks: list[Block]
     final_norm: eqx.nn.RMSNorm
     lm_head: eqx.nn.Linear
@@ -80,6 +81,9 @@ class GPT(eqx.Module):
         self.dtype = config.dtype
         self.tok_embed = eqx.nn.Embedding(
             config.vocab_size, config.n_embed, key=k2, dtype=self.dtype
+        )
+        self.tok_embed = eqx.nn.Embedding(
+            config.context_len, config.n_embed, key=k1, dtype=self.dtype
         )
         self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layers)]
         self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False, use_weight=False)
@@ -94,7 +98,7 @@ class GPT(eqx.Module):
         targets: Int[Array, "ctx"] | None = None,
         key: PRNGKeyArray | None = None,
     ):
-        x = eqx.filter_vmap(self.tok_embed)(idx)
+        x = eqx.filter_vmap(self.tok_embed)(idx) + eqx.filter_vmap(self.pos_embed)(jnp.arange(idx))
         if key is None:
             key = jr.PRNGKey(0)  # inference, i guess, so dummy key
         keys = jr.split(key, len(self.blocks))
