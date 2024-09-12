@@ -82,7 +82,7 @@ class GPT(eqx.Module):
         self.tok_embed = eqx.nn.Embedding(
             config.vocab_size, config.n_embed, key=k2, dtype=self.dtype
         )
-        self.tok_embed = eqx.nn.Embedding(
+        self.pos_embed = eqx.nn.Embedding(
             config.context_len, config.n_embed, key=k1, dtype=self.dtype
         )
         self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layers)]
