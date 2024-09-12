@@ -58,8 +58,8 @@ class TrainConfig(eqx.Module):
                     n_grad_accumulation=1,
                     train_for=600_000,
                     lr_config={
-                        "init_value": 1e-3,
-                        "peak_value": 1e-3,
+                        "init_value": 2e-3,
+                        "peak_value": 2e-3,
                         "warmup_steps": 1000,
                         "decay_steps": 600_000,
                         "end_value": 5e-5,
