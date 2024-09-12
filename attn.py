@@ -1,3 +1,4 @@
+import einops
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -67,10 +68,6 @@ class FlashMultiheadAttention(Module, strict=True):
         key_size: int | None = None,
         value_size: int | None = None,
         output_size: int | None = None,
-        use_query_bias: bool = False,
-        use_key_bias: bool = False,
-        use_value_bias: bool = False,
-        use_output_bias: bool = False,
         dropout_p: float = 0.0,
         inference: bool = False,
         dtype=None,
@@ -90,22 +87,22 @@ class FlashMultiheadAttention(Module, strict=True):
         self.query_proj = Linear(
             query_size,
             query_size,
-            use_bias=use_query_bias,
+            use_bias=False,
             dtype=dtype,
             key=qkey,
         )
-        self.key_proj = Linear(key_size, key_size, use_bias=use_key_bias, dtype=dtype, key=kkey)
+        self.key_proj = Linear(key_size, key_size, use_bias=False, dtype=dtype, key=kkey)
         self.value_proj = Linear(
             value_size,
             value_size,
-            use_bias=use_value_bias,
+            use_bias=False,
             dtype=dtype,
             key=vkey,
         )
         self.output_proj = Linear(
             query_size,
             output_size,
-            use_bias=use_output_bias,
+            use_bias=False,
             dtype=dtype,
             key=okey,
         )
@@ -116,10 +113,6 @@ class FlashMultiheadAttention(Module, strict=True):
         self.key_size = key_size
         self.value_size = value_size
         self.output_size = output_size
-        self.use_query_bias = use_query_bias
-        self.use_key_bias = use_key_bias
-        self.use_value_bias = use_value_bias
-        self.use_output_bias = use_output_bias
 
     @jax.named_scope("eqx.nn.MultiheadAttention")
     def __call__(
@@ -140,6 +133,16 @@ class FlashMultiheadAttention(Module, strict=True):
         query_heads = self._project(self.query_proj, query)
         key_heads = self._project(self.key_proj, key_)
         value_heads = self._project(self.value_proj, value)
+
+        shape_before = query_heads.shape
+
+        query_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(query_heads)
+        key_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(key_heads)
+
+        query_heads = einops.rearrange(query_heads, "num_heads seq embed -> seq num_heads embed")
+        key_heads = einops.rearrange(key_heads, "num_heads seq embed -> seq num_heads embed")
+
+        assert query_heads.shape == shape_before
 
         attn_key = key if key is not None else None
         attn = dot_product_attention(
