@@ -1,4 +1,3 @@
-import einops
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -141,16 +140,6 @@ class FlashMultiheadAttention(Module, strict=True):
         query_heads = self._project(self.query_proj, query)
         key_heads = self._project(self.key_proj, key_)
         value_heads = self._project(self.value_proj, value)
-
-        shape_before = query_heads.shape
-
-        # query_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(query_heads) # noqa
-        # key_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(key_heads) # noqa
-
-        query_heads = einops.rearrange(query_heads, "num_heads seq embed -> seq num_heads embed")
-        key_heads = einops.rearrange(key_heads, "num_heads seq embed -> seq num_heads embed")
-
-        assert query_heads.shape == shape_before
 
         attn_key = key if key is not None else None
         attn = dot_product_attention(
