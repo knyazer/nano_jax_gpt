@@ -58,11 +58,11 @@ class TrainConfig(eqx.Module):
                     n_grad_accumulation=1,
                     train_for=600_000,
                     lr_config={
-                        "init_value": 5e-4,
-                        "peak_value": 5e-4,
+                        "init_value": 1e-3,
+                        "peak_value": 1e-3,
                         "warmup_steps": 1000,
                         "decay_steps": 600_000,
-                        "end_value": 3e-5,
+                        "end_value": 5e-5,
                     },
                     dataset_name="openwebtext",
                 )
@@ -85,6 +85,6 @@ class RunConfig(eqx.Module):
             case "chargpt":
                 return RunConfig()
             case "gpt2":
-                return RunConfig(times_to_eval=200, times_to_checkpoint=10, n_batches_in_eval=50)
+                return RunConfig(times_to_eval=200, times_to_checkpoint=10, n_batches_in_eval=100)
             case _:
                 raise AssertionError("Only 'chargpt' or 'gpt2' are allowed as presets!")
