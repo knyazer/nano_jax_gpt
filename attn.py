@@ -54,10 +54,6 @@ class FlashMultiheadAttention(Module, strict=True):
     key_size: int = field(static=True)
     value_size: int = field(static=True)
     output_size: int = field(static=True)
-    use_query_bias: bool = field(static=True)
-    use_key_bias: bool = field(static=True)
-    use_value_bias: bool = field(static=True)
-    use_output_bias: bool = field(static=True)
     rope: eqx.nn.RotaryPositionalEmbedding
 
     def __init__(
