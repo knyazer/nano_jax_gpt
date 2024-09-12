@@ -26,8 +26,8 @@ class Block(eqx.Module):
         self.proj_fc = eqx.nn.Linear(
             config.n_embed * 4, config.n_embed, use_bias=False, key=k2, dtype=self.dtype
         )
-        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
-        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False)
+        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False, use_weight=False)
+        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False, use_weight=False)
         self.attn = FlashMultiheadAttention(
             config.n_heads,
             config.n_embed,
