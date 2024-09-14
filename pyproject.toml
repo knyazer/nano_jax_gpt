@@ -19,6 +19,7 @@ dependencies = [
     "jaxtyping>=0.2.34",
     "optax>=0.2.3",
     "tiktoken>=0.7.0",
+    "transformers[cpu]>=4.44.2",
     "wandb>=0.17.8",
 ]
 

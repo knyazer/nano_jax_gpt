@@ -18,11 +18,11 @@ def default_floating_dtype():
 
 @filter_jit
 def causal_dot_product_attention(q, k, v):
-    try:
-        if jax.device_count(backend="gpu") > 0:
-            return gpu_attention.mha(q, k, v, None, causal=True, block_q=32, block_k=32)
-    except Exception:
-        ...
+    # try:
+    #     if jax.device_count(backend="gpu") > 0:
+    #         return gpu_attention.mha(q, k, v, None, causal=True, block_q=32, block_k=32)
+    # except Exception:
+    #     ...
 
     return fallback_dot_product_attention(q, k, v, is_causal=True)
 
@@ -31,14 +31,8 @@ def dot_product_attention(
     query: Float[Array, "q_seq qk_size"],
     key_: Float[Array, "kv_seq qk_size"],
     value: Float[Array, "kv_seq v_size"],
-    dropout: Dropout | None = None,
-    *,
-    key: PRNGKeyArray | None = None,
-    inference: bool | None = None,
 ) -> Float[Array, "q_seq v_size"]:
     attn = causal_dot_product_attention(query[None, :], key_[None, :], value[None, :])
-    if dropout is not None:
-        attn = dropout(attn, key=key, inference=inference)
     return attn
 
 
@@ -54,7 +48,6 @@ class FlashMultiheadAttention(Module, strict=True):
     key_size: int = field(static=True)
     value_size: int = field(static=True)
     output_size: int = field(static=True)
-    rope: eqx.nn.RotaryPositionalEmbedding
 
     def __init__(
         self,
@@ -72,7 +65,6 @@ class FlashMultiheadAttention(Module, strict=True):
         dtype = default_floating_dtype() if dtype is None else dtype
         qkey, kkey, vkey, okey = jrandom.split(key, 4)
 
-        self.rope = eqx.nn.RotaryPositionalEmbedding(query_size // num_heads, 10_000)
         if key_size is None:
             key_size = query_size
         if value_size is None:
@@ -130,20 +122,9 @@ class FlashMultiheadAttention(Module, strict=True):
         key_heads = self._project(self.key_proj, key_)
         value_heads = self._project(self.value_proj, value)
 
-        shape_before = query_heads.shape
-
-        query_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(query_heads)
-        key_heads = jax.vmap(lambda x: self.rope(x).astype(x.dtype), in_axes=(1,))(key_heads)
-
-        query_heads = einops.rearrange(query_heads, "num_heads seq embed -> seq num_heads embed")
-        key_heads = einops.rearrange(key_heads, "num_heads seq embed -> seq num_heads embed")
-
-        assert query_heads.shape == shape_before
-
-        attn_key = key if key is not None else None
-        attn = dot_product_attention(
-            query_heads, key_heads, value_heads, key=attn_key, dropout=self.dropout
-        )
+        attn = dot_product_attention(query_heads, key_heads, value_heads)
+        if self.dropout is not None:
+            attn = self.dropout(attn, key=key)
         attn = attn.reshape(query_seq_length, -1)
 
         return jax.vmap(self.output_proj)(attn)

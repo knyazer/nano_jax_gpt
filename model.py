@@ -11,8 +11,8 @@ from configs import GPTConfig
 class Block(eqx.Module):
     expand_fc: eqx.nn.Linear
     proj_fc: eqx.nn.Linear
-    lnorm_attn: eqx.nn.RMSNorm
-    lnorm_mlp: eqx.nn.RMSNorm
+    lnorm_attn: eqx.nn.LayerNorm
+    lnorm_mlp: eqx.nn.LayerNorm
     attn: FlashMultiheadAttention
     dropout: eqx.nn.Dropout
     dtype: jnp.dtype
@@ -20,14 +20,10 @@ class Block(eqx.Module):
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3 = jr.split(key, 3)
         self.dtype = config.dtype
-        self.expand_fc = eqx.nn.Linear(
-            config.n_embed, 4 * config.n_embed, use_bias=False, key=k1, dtype=self.dtype
-        )
-        self.proj_fc = eqx.nn.Linear(
-            config.n_embed * 4, config.n_embed, use_bias=False, key=k2, dtype=self.dtype
-        )
-        self.lnorm_attn = eqx.nn.RMSNorm(config.n_embed, use_bias=False, use_weight=False)
-        self.lnorm_mlp = eqx.nn.RMSNorm(config.n_embed, use_bias=False, use_weight=False)
+        self.expand_fc = eqx.nn.Linear(config.n_embed, 4 * config.n_embed, key=k1, dtype=self.dtype)
+        self.proj_fc = eqx.nn.Linear(config.n_embed * 4, config.n_embed, key=k2, dtype=self.dtype)
+        self.lnorm_attn = eqx.nn.LayerNorm(config.n_embed)
+        self.lnorm_mlp = eqx.nn.LayerNorm(config.n_embed)
         self.attn = FlashMultiheadAttention(
             config.n_heads,
             config.n_embed,
@@ -69,8 +65,7 @@ class GPT(eqx.Module):
     tok_embed: eqx.nn.Embedding
     pos_embed: eqx.nn.Embedding
     blocks: list[Block]
-    final_norm: eqx.nn.RMSNorm
-    lm_head: eqx.nn.Linear
+    final_norm: eqx.nn.LayerNorm
 
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3, k4 = jr.split(key, 4)
@@ -82,11 +77,11 @@ class GPT(eqx.Module):
             config.context_len, config.n_embed, key=k1, dtype=self.dtype
         )
         self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layers)]
-        self.final_norm = eqx.nn.RMSNorm(config.n_embed, use_bias=False, use_weight=False)
-        self.lm_head = eqx.nn.Linear(
-            config.n_embed, config.vocab_size, use_bias=False, key=k4, dtype=self.dtype
-        )
+        self.final_norm = eqx.nn.LayerNorm(config.n_embed, use_bias=False, use_weight=False)
         self.config = config
+
+    def lm_head(self, x):
+        return x @ self.tok_embed.weight.T
 
     def __call__(
         self,
@@ -94,7 +89,9 @@ class GPT(eqx.Module):
         targets: Int[Array, "ctx"] | None = None,
         key: PRNGKeyArray | None = None,
     ):
-        x = eqx.filter_vmap(self.tok_embed)(idx)
+        x = eqx.filter_vmap(self.tok_embed)(idx) + eqx.filter_vmap(self.pos_embed)(
+            jnp.arange(len(idx))
+        )
         if key is None:
             key = jr.PRNGKey(0)  # inference, i guess, so dummy key
         keys = jr.split(key, len(self.blocks))
@@ -111,19 +108,11 @@ class GPT(eqx.Module):
             loss = None
         return logits, loss
 
-    def generate(self, idx, key, max_new_tokens=256):
+    def generate(self, idx, key, max_new_tokens=64):
         forward = eqx.nn.inference_mode(self)
 
-        def scan_fn(carry, _):
-            idx, key = carry
-            key, subkey = jax.random.split(key)
-
+        for _ in range(max_new_tokens):
             logits, _ = forward(idx, key=key)
-            idx_next = jr.categorical(logits=logits, key=subkey)
-
-            idx = jnp.roll(idx, -1)
-            idx = idx.at[-1].set(idx_next)
-            return (idx, key), idx_next
-
-        _, new_stuff = jax.lax.scan(scan_fn, (idx, key), None, length=max_new_tokens)
-        return new_stuff.ravel()
+            idx_next = jr.categorical(logits=logits, key=key)
+            idx = jnp.concatenate([idx, jnp.array([idx_next])])
+            yield idx_next

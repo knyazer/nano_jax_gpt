@@ -20,7 +20,7 @@ class GPTConfig(eqx.Module):
             case "gpt2":
                 return GPTConfig(
                     context_len=1024,
-                    vocab_size=50384,
+                    vocab_size=50257,
                     n_embed=768,
                     n_layers=12,
                     n_heads=12,
