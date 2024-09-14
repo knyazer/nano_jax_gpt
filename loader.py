@@ -22,7 +22,7 @@ def linear_from_pretrained(hf_linear, *, transpose=False):
 
 
 def norm_from_pretrained(hf_norm):
-    norm = eqx.nn.LayerNorm(hf_norm["scale"].shape)
+    norm = eqx.nn.LayerNorm(hf_norm["scale"].shape, eps=1e-5)
     norm = eqx.tree_at(lambda t: t.weight, norm, hf_norm["scale"])
     norm = eqx.tree_at(lambda t: t.bias, norm, hf_norm["bias"])
     return norm
@@ -32,8 +32,8 @@ def _qkv_split(qkv_layer):
     weights = qkv_layer.weight
     biases = qkv_layer.bias
 
-    w1, w2, w3 = jnp.split(weights, 3, axis=-1)
-    b1, b2, b3 = jnp.split(biases, 3, axis=-1)
+    w1, w2, w3 = jnp.split(weights.T, 3, axis=0)
+    b1, b2, b3 = jnp.split(biases.T, 3, axis=0)
 
     res = []
     for w, b in zip((w1, w2, w3), (b1, b2, b3)):
@@ -84,6 +84,7 @@ def block_from_pretrained(block, hf_block, config: GPTConfig):
 
 def gpt_from_pretrained():
     config = GPTConfig().from_preset("gpt2")
+    config = eqx.tree_at(lambda c: c.dtype, config, jnp.float32)
     model = GPT(jr.PRNGKey(0), config)
     model = jax.tree.map(
         lambda x: jnp.nan * x if eqx.is_array(x) else x, model
@@ -109,21 +110,21 @@ if __name__ == "__main__":
 
     text = "I love oranges."
     ids = jnp.array(enc.encode(text))
-    true_model = FlaxGPT2LMHeadModel.from_pretrained("gpt2")
-    out = true_model(ids[None, :])
+    # true_model = FlaxGPT2LMHeadModel.from_pretrained("gpt2")
+    # out = true_model(ids[None, :])
     my_out = model(ids)
-    print(out, my_out)
-    nids = ids
-    nids = ids
-    for _ in range(10):
-        out = true_model(nids[None, :])
-        tok = jnp.argmax(out.logits[0][-1])
-        print(enc.decode([tok]))
-        nids = jnp.concatenate([nids, tok[None]])
-        print(enc.decode([int(x) for x in nids]))
-    for _ in range(10):
-        out = model(nids)
-        tok = jnp.argmax(out[0])
-        print(enc.decode([tok]))
-        nids = jnp.concatenate([nids, tok[None]])
-        print(enc.decode([int(x) for x in nids]))
+    # print(out, my_out)
+    # nids = ids
+    # nids = ids
+    # for _ in range(10):
+    #     out = true_model(nids[None, :])
+    #     tok = jnp.argmax(out.logits[0][-1])
+    #     print(enc.decode([tok]))
+    #     nids = jnp.concatenate([nids, tok[None]])
+    #     print(enc.decode([int(x) for x in nids]))
+    # for _ in range(10):
+    #     out = model(nids)
+    #     tok = jnp.argmax(out[0])
+    #     print(enc.decode([tok]))
+    #     nids = jnp.concatenate([nids, tok[None]])
+    #     print(enc.decode([int(x) for x in nids]))

@@ -14,6 +14,7 @@ dependencies = [
     "datasets>=2.21.0",
     "einops>=0.8.0",
     "equinox>=0.11.5",
+    "flax>=0.9.0",
     "jax-smi>=1.0.4",
     "jax[cuda12-pip]>=0.4.31",
     "jaxtyping>=0.2.34",
