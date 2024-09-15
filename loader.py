@@ -62,7 +62,6 @@ def attn_from_pretrained(hf_attn, config: GPTConfig):
     attn = eqx.tree_at(lambda t: t.key_proj, attn, k)
     attn = eqx.tree_at(lambda t: t.value_proj, attn, v)
 
-    # output is just one-to-one
     attn = eqx.tree_at(lambda t: t.output_proj, attn, linear_from_pretrained(hf_attn["c_proj"]))
     return attn
 
@@ -83,19 +82,21 @@ def block_from_pretrained(block, hf_block, config: GPTConfig):
 
 
 def gpt_from_pretrained():
+    # some notes: we support only gpt2 for now, since this is the most common use case
     config = GPTConfig().from_preset("gpt2")
-    config = eqx.tree_at(lambda c: c.dtype, config, jnp.float32)
     model = GPT(jr.PRNGKey(0), config)
-    model = jax.tree.map(
-        lambda x: jnp.nan * x if eqx.is_array(x) else x, model
-    )  # make sure all arrays are nans
-    model_hf = FlaxGPT2LMHeadModel.from_pretrained("gpt2")
+    # lets ensure we override all the weights, by setting the default to nan
+    model = jax.tree.map(lambda x: jnp.nan * x if eqx.is_array(x) else x, model)
+
+    model_hf = FlaxGPT2LMHeadModel.from_pretrained("gpt2")  # use flax model: the closest it gets
     params_hf = model_hf._params["transformer"]  # noqa # type: ignore
 
-    # now, fun: exporting the weights into our model
+    # a funny bug here: you cannot just iterate over params_hf['h'].values()
+    # cuz the order will be different; don't ask me how much time i spent
+    # debugging this lol
     block_list = [
-        block_from_pretrained(ours, hfs, config)
-        for ours, hfs in zip(model.blocks, params_hf["h"].values())
+        block_from_pretrained(ours, params_hf["h"][str(ind)], config)
+        for ind, ours in enumerate(model.blocks)
     ]
     model = eqx.tree_at(lambda m: m.blocks, model, block_list)
     model = eqx.tree_at(lambda m: m.tok_embed.weight, model, params_hf["wte"]["embedding"])
@@ -110,21 +111,11 @@ if __name__ == "__main__":
 
     text = "I love oranges."
     ids = jnp.array(enc.encode(text))
-    # true_model = FlaxGPT2LMHeadModel.from_pretrained("gpt2")
-    # out = true_model(ids[None, :])
     my_out = model(ids)
-    # print(out, my_out)
-    # nids = ids
-    # nids = ids
-    # for _ in range(10):
-    #     out = true_model(nids[None, :])
-    #     tok = jnp.argmax(out.logits[0][-1])
-    #     print(enc.decode([tok]))
-    #     nids = jnp.concatenate([nids, tok[None]])
-    #     print(enc.decode([int(x) for x in nids]))
-    # for _ in range(10):
-    #     out = model(nids)
-    #     tok = jnp.argmax(out[0])
-    #     print(enc.decode([tok]))
-    #     nids = jnp.concatenate([nids, tok[None]])
-    #     print(enc.decode([int(x) for x in nids]))
+    nids = ids
+    for _ in range(10):
+        out = model(nids)
+        tok = jnp.argmax(out[0])
+        print(enc.decode([tok]))
+        nids = jnp.concatenate([nids, tok[None]])
+        print(enc.decode([int(x) for x in nids]))

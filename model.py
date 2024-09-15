@@ -41,15 +41,12 @@ class Block(eqx.Module):
         else:
             mlp_key, attn_key = jr.split(key)
         x_normed = eqx.filter_vmap(self.lnorm_attn)(x).astype(self.dtype)
-        print(f"{float(x[0,0]):.5f} -> {float(x_normed[0, 0]):.5f}")
         x = x + self.attn(
             query=x_normed,
             key_=x_normed,
             value=x_normed,
             key=attn_key,
         )
-
-        print(f"{float(x[0,0]):.5f} -> {float(self.lnorm_mlp(x[0])[0]):.5f}")
 
         def _mlp(x):
             x_expanded = self.expand_fc(self.lnorm_mlp(x))
@@ -59,7 +56,6 @@ class Block(eqx.Module):
             eqx.filter_vmap(_mlp)(x),
             key=mlp_key,
         )
-        print(f"POST MLP: {float(x[0,0]):.5f}")
         return x
 
 
@@ -96,15 +92,12 @@ class GPT(eqx.Module):
         x = eqx.filter_vmap(self.tok_embed)(idx) + eqx.filter_vmap(self.pos_embed)(
             jnp.arange(len(idx))
         )
-        print(x[0][0])
         if key is None:
             key = jr.PRNGKey(0)  # inference, i guess, so dummy key
         keys = jr.split(key, len(self.blocks))
         for block, bkey in zip(self.blocks, keys):  # todo: scan over layers
             x = block(x, key=bkey)
-            print(x[0][0])
         x = eqx.filter_vmap(self.final_norm)(x).astype(self.dtype)
-        print(x[0][0])
         if targets is not None:
             logits = eqx.filter_vmap(self.lm_head)(x)
             labels = jax.nn.one_hot(targets, self.config.vocab_size, dtype=self.dtype)

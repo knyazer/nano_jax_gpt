@@ -108,7 +108,6 @@ class FlashMultiheadAttention(Module, strict=True):
         *,
         key: PRNGKeyArray | None = None,
     ) -> Float[Array, "q_seq o_size"]:
-        print(f"preattn {query[0,0]}")
         query_seq_length, _ = query.shape
         kv_seq_length, _ = key_.shape
         kv_seq_length2, _ = value.shape
@@ -120,15 +119,12 @@ class FlashMultiheadAttention(Module, strict=True):
         key_heads = self._project(self.key_proj, key_)
         value_heads = self._project(self.value_proj, value)
 
-        print(f"k0 {key_heads[0,0,0]} q0 {query_heads[0,0,0]} v0 {value_heads[0,0,0]}")
         attn = dot_product_attention(query_heads, key_heads, value_heads)
         attn = attn.reshape(query_seq_length, -1)
-        print(f"afterattn but prepost: {attn[0,0]}")
         attn = jax.vmap(self.output_proj)(attn)
 
         if self.dropout is not None:
             attn = self.dropout(attn, key=key)
-        print(f"postattn: {attn[0,0]}")
 
         return attn
 
