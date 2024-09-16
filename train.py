@@ -150,16 +150,13 @@ def main():
     model = GPT.make(jr.key(0), model_config)
     model_params = eqx.filter(model, eqx.is_array)
 
-    # we decay only the actual weights, biases and norms are not decayed
-    def decayed_params(params):
-        return jax.tree.map(lambda x: len(x.shape) >= 2, params)
-
     optim = optax.chain(
         optax.clip_by_global_norm(train_config.global_norm),
         optax.adamw(
             optax.warmup_cosine_decay_schedule(**train_config.lr_config),
             weight_decay=train_config.weight_decay,
-            mask=decayed_params,
+            # we decay only the actual weights, biases and norms are not decayed
+            mask=lambda p: jax.tree.map(lambda x: len(x.shape) >= 2, p),
         ),
     )
     n_model_params = jax.tree.map(lambda x: x.size, model_params)

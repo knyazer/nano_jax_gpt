@@ -89,10 +89,13 @@ class GPT(eqx.Module):
         def _init(path, x):
             path_str = "/".join([getattr(p, "name", "") + str(getattr(p, "idx", "")) for p in path])
             key = jr.key(hash(path_str))
-            # don't identify by the path, since otherwise it could lead to
-            # "I changed the name of the variable and it stopped working" type of issues
+
+            weight_scale = 1.0
+            if path_str.endswith("proj_fc"):  # from the paper: smaller init for residual projection
+                weight_scale = 1.0 / jnp.sqrt(config.n_layers * 2)
+
             if isinstance(x, eqx.nn.Embedding | eqx.nn.Linear):
-                new_weight = jr.normal(key, x.weight.shape) * 0.02
+                new_weight = jr.normal(key, x.weight.shape) * 0.02 * weight_scale
                 x = eqx.tree_at(lambda _x: _x.weight, x, new_weight.astype(x.weight.dtype))
                 if getattr(x, "bias", None) is not None:
                     x = eqx.tree_at(lambda _x: _x.bias, x, jnp.zeros_like(x.bias))
