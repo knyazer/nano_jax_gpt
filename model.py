@@ -136,8 +136,8 @@ class GPT(eqx.Module):
         x = eqx.filter_vmap(self.final_norm)(x).astype(self.dtype)
 
         if targets is not None:
-            logits = eqx.filter_vmap(self.lm_head)(x)
-            labels = jax.nn.one_hot(targets, self.config.vocab_size, dtype=self.dtype)
+            logits = eqx.filter_vmap(self.lm_head)(x).astype(jnp.float32)
+            labels = jax.nn.one_hot(targets, self.config.vocab_size, dtype=jnp.float32)
             log_probs = jax.nn.log_softmax(logits)
             loss = -jnp.sum(jnp.nan_to_num(labels * log_probs, nan=0)) / input_len
         else:
