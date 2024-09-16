@@ -155,9 +155,9 @@ def main():
         return jax.tree.map(lambda x: len(x.shape) >= 2, params)
 
     optim = optax.chain(
+        optax.add_decayed_weights(train_config.weight_decay, mask=decayed_params),
         optax.clip_by_global_norm(train_config.global_norm),
         optax.adam(optax.warmup_cosine_decay_schedule(**train_config.lr_config)),
-        optax.add_decayed_weights(train_config.weight_decay, mask=decayed_params),
     )
     n_model_params = jax.tree.map(lambda x: x.size, model_params)
     n_model_params = sum(jax.tree.leaves(n_model_params))

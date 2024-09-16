@@ -63,7 +63,7 @@ class TrainConfig(eqx.Module):
                         "peak_value": 6e-4,
                         "warmup_steps": 2000,
                         "decay_steps": 600_000,
-                        "end_value": 6e-5,  # due to chinchilla laws
+                        "end_value": 6e-5,  # chinchilla laws
                     },
                     dataset_name="openwebtext",
                 )
