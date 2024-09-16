@@ -31,7 +31,7 @@ class GPTConfig(eqx.Module):
 
 
 class TrainConfig(eqx.Module):
-    batch_size: int = 256
+    batch_size: int = 32
     n_grad_accumulation: int = 1  # for how many steps to accumulate gradients
     lr_config: dict = eqx.field(
         default_factory=lambda: {

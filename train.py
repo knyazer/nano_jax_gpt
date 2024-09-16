@@ -154,7 +154,7 @@ def main():
             weight_decay=train_config.weight_decay,
         ),
     )
-    model = GPT(jr.key(0), model_config)
+    model = GPT.make(jr.key(0), model_config)
     n_model_params = jax.tree.map(lambda x: x.size, eqx.filter(model, eqx.is_array))
     n_model_params = sum(jax.tree.leaves(n_model_params))
 

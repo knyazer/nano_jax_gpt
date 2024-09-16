@@ -81,6 +81,28 @@ class GPT(eqx.Module):
         self.final_norm = eqx.nn.LayerNorm(config.n_embed)
         self.config = config
 
+    @classmethod
+    def make(cls, key: PRNGKeyArray, config: GPTConfig):
+        model = cls(key, config)
+
+        # now, init weights according to the gpt2 paper, with a small normal
+        def _init(path, x):
+            path_str = "/".join([getattr(p, "name", "") + str(getattr(p, "idx", "")) for p in path])
+            key = jr.key(hash(path_str))
+            # don't identify by the path, since otherwise it could lead to
+            # "I changed the name of the variable and it stopped working" type of issues
+            if isinstance(x, eqx.nn.Embedding | eqx.nn.Linear):
+                new_weight = jr.normal(key, x.weight.shape) * 0.02
+                x = eqx.tree_at(lambda _x: _x.weight, x, new_weight.astype(x.weight.dtype))
+                if getattr(x, "bias", None) is not None:
+                    x = eqx.tree_at(lambda _x: _x.bias, x, jnp.zeros_like(x.bias))
+            return x
+
+        model = jax.tree_util.tree_map_with_path(
+            _init, model, is_leaf=lambda x: isinstance(x, eqx.nn.Linear | eqx.nn.Embedding)
+        )
+        return model
+
     def lm_head(self, x):
         return x @ self.tok_embed.weight.T
 
@@ -122,13 +144,13 @@ class GPT(eqx.Module):
 
         return logits, loss
 
+    def generate(self, idx, key, max_new_tokens=64):
+        forward = eqx.nn.inference_mode(self)
+        keys = jr.split(key, max_new_tokens)
 
-def generate(self, idx, key, max_new_tokens=64):
-    forward = eqx.nn.inference_mode(self)
-
-    for _ in range(max_new_tokens):
-        key, subkey = jr.split(key)
-        logits, _ = (forward)(idx, key=key)
-        idx_next = jr.categorical(logits=logits, key=subkey)
-        idx = jnp.concatenate([idx, jnp.array([idx_next])])
-        yield idx_next
+        for _key in keys:
+            subkey, key = jr.split(_key)
+            logits, _ = (forward)(idx, key=key)
+            idx_next = jr.categorical(logits=logits, key=subkey)
+            idx = jnp.concatenate([idx, jnp.array([idx_next])])
+            yield idx_next
