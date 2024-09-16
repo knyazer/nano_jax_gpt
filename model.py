@@ -150,7 +150,7 @@ class GPT(eqx.Module):
 
         for _key in keys:
             subkey, key = jr.split(_key)
-            logits, _ = (forward)(idx, key=key)
+            logits, _ = eqx.filter_jit(forward)(idx, key=key)
             idx_next = jr.categorical(logits=logits, key=subkey)
             idx = jnp.concatenate([idx, jnp.array([idx_next])])
             yield idx_next

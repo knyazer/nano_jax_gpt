@@ -139,7 +139,7 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
 
     # generate a continuation for some random text, and record it to wandb
     test_sample = get_batches("test", np.random.default_rng(11), shape=(1,))[0][0]
-    out = eqx.filter_jit(inference_model.generate)(idx=test_sample, key=jr.key(42))
+    out = inference_model.generate(idx=test_sample, key=jr.key(42))
     text = decode([int(x) for x in out])
     evals_table.append([text])
     wandb.log({"text": wandb.Table(["text"], data=evals_table), "eval_loss": eval_loss})

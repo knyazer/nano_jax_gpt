@@ -55,7 +55,7 @@ class TrainConfig(eqx.Module):
             case "gpt2":
                 return TrainConfig(
                     batch_size=256,  # gpt2 paper - 512
-                    n_grad_accumulation=2,
+                    n_grad_accumulation=1,
                     train_for=600_000,
                     weight_decay=1e-1,
                     lr_config={
@@ -86,6 +86,6 @@ class RunConfig(eqx.Module):
             case "chargpt":
                 return RunConfig()
             case "gpt2":
-                return RunConfig(times_to_eval=400, times_to_checkpoint=40, n_batches_in_eval=50)
+                return RunConfig(times_to_eval=100, times_to_checkpoint=10, n_batches_in_eval=50)
             case _:
                 raise AssertionError("Only 'chargpt' or 'gpt2' are allowed as presets!")
