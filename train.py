@@ -148,18 +148,22 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
 
 def main():
     model = GPT.make(jr.key(0), model_config)
+    model_params = eqx.filter(model, eqx.is_array)
+
     # we decay only the actual weights, biases and norms are not decayed
-    decayed_params = jax.tree.map(lambda x: len(x.shape) >= 2, model, is_leaf=eqx.is_array)
+    def decayed_params(params):
+        return jax.tree.map(lambda x: len(x.shape) >= 2, params)
+
     optim = optax.chain(
         optax.clip_by_global_norm(train_config.global_norm),
         optax.adam(optax.warmup_cosine_decay_schedule(**train_config.lr_config)),
         optax.add_decayed_weights(train_config.weight_decay, mask=decayed_params),
     )
-    n_model_params = jax.tree.map(lambda x: x.size, eqx.filter(model, eqx.is_array))
+    n_model_params = jax.tree.map(lambda x: x.size, model_params)
     n_model_params = sum(jax.tree.leaves(n_model_params))
 
     print(f"Model has {n_model_params/1_000_000:.2f}M parameters")
-    opt_state = optim.init(eqx.filter(model, eqx.is_array))
+    opt_state = optim.init(model_params)
     eval_loss = float(jnp.nan)
 
     # we partition the data by the batch dimension
