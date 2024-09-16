@@ -31,7 +31,7 @@ class GPTConfig(eqx.Module):
 
 
 class TrainConfig(eqx.Module):
-    batch_size: int = 64
+    batch_size: int = 256
     n_grad_accumulation: int = 1  # for how many steps to accumulate gradients
     lr_config: dict = eqx.field(
         default_factory=lambda: {
@@ -55,14 +55,15 @@ class TrainConfig(eqx.Module):
             case "gpt2":
                 return TrainConfig(
                     batch_size=256,  # gpt2 paper - 512
-                    n_grad_accumulation=1,
+                    n_grad_accumulation=2,
                     train_for=600_000,
+                    weight_decay=1e-1,
                     lr_config={
-                        "init_value": 2e-3,
-                        "peak_value": 2e-3,
-                        "warmup_steps": 1000,
+                        "init_value": 6e-4,
+                        "peak_value": 6e-4,
+                        "warmup_steps": 2000,
                         "decay_steps": 600_000,
-                        "end_value": 5e-5,
+                        "end_value": 6e-5,  # due to chinchilla laws
                     },
                     dataset_name="openwebtext",
                 )
@@ -85,6 +86,6 @@ class RunConfig(eqx.Module):
             case "chargpt":
                 return RunConfig()
             case "gpt2":
-                return RunConfig(times_to_eval=200, times_to_checkpoint=10, n_batches_in_eval=100)
+                return RunConfig(times_to_eval=400, times_to_checkpoint=40, n_batches_in_eval=50)
             case _:
                 raise AssertionError("Only 'chargpt' or 'gpt2' are allowed as presets!")

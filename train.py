@@ -129,7 +129,7 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
         _, losses = jax.lax.scan(
             eqx.Partial(lambda _, data: (None, loss_fn(model, *data, key=None))), None, (X, y)
         )
-        return losses.mean()  # return the mean
+        return losses.astype(jnp.float32).mean()  # return the mean
 
     eval_x, eval_y = get_batches(
         "test", eval_generator, shape=(run_config.n_batches_in_eval, batch_size)

@@ -50,7 +50,7 @@ class Block(eqx.Module):
         )
 
         def _mlp(x):
-            x_expanded = self.expand_fc(self.lnorm_mlp(x))
+            x_expanded = self.expand_fc(self.lnorm_mlp(x).astype(self.dtype))
             return self.proj_fc(jax.nn.gelu(x_expanded))
 
         x = x + self.dropout(
