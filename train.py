@@ -147,14 +147,14 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
 
 
 def main():
+    model = GPT.make(jr.key(0), model_config)
+    # we decay only the actual weights, biases and norms are not decayed
+    decayed_params = jax.tree.map(lambda x: len(x.shape) >= 2, model, is_leaf=eqx.is_array)
     optim = optax.chain(
         optax.clip_by_global_norm(train_config.global_norm),
-        optax.adamw(
-            optax.warmup_cosine_decay_schedule(**train_config.lr_config),
-            weight_decay=train_config.weight_decay,
-        ),
+        optax.adam(optax.warmup_cosine_decay_schedule(**train_config.lr_config)),
+        optax.add_decayed_weights(train_config.weight_decay, mask=decayed_params),
     )
-    model = GPT.make(jr.key(0), model_config)
     n_model_params = jax.tree.map(lambda x: x.size, eqx.filter(model, eqx.is_array))
     n_model_params = sum(jax.tree.leaves(n_model_params))
 
