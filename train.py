@@ -89,11 +89,7 @@ def loss_fn(
 
 
 @eqx.filter_jit(donate="all")  # donate="all" allows to reuse args memory: free x2-ish memory
-def step_fn(model, optim, opt_state, X, y, key, sharding):
-    # shard the model and the data
-    model, opt_state = eqx.filter_shard((model, opt_state), sharding.replicate())
-    X, y = eqx.filter_shard((X, y), sharding)
-
+def step_fn(model, optim, opt_state, X, y, key):
     # accumulation function: just compute the gradient and the loss
     def grad_acc_scan_fn(key: PRNGKeyArray, data: tuple):
         loss, grads = eqx.filter_value_and_grad(loss_fn)(
@@ -101,13 +97,11 @@ def step_fn(model, optim, opt_state, X, y, key, sharding):
         )
         return jr.split(key)[0], (loss, grads)
 
-    # partition manually, since eqxi.scan does not do it automatically
-    model_d, model_s = eqx.partition(model, eqx.is_array)
     _, (loss, grads) = eqxi.scan(grad_acc_scan_fn, key, (X, y), kind="lax")
 
     # compute the mean loss and grads from the accumulated values
-    loss = jax.tree.map(lambda x: jnp.mean(x), loss, is_leaf=eqx.is_inexact_array)
-    grads = jax.tree.map(lambda x: jnp.mean(x, axis=0), grads, is_leaf=eqx.is_inexact_array)
+    loss = jax.tree.map(lambda x: jnp.mean(x), loss, is_leaf=eqx.is_inexact_array_like)
+    grads = jax.tree.map(lambda x: jnp.mean(x, axis=0), grads, is_leaf=eqx.is_inexact_array_like)
 
     # step the model
     updates, opt_state = optim.update(grads, opt_state, model)
@@ -172,7 +166,7 @@ def main():
     # sharding stuff
     sharding = jshard.PositionalSharding(devices)
     replicated = sharding.replicate()
-    model = eqx.filter_shard(model, replicated)
+    model, opt_state = eqx.filter_shard((model, opt_state), replicated)
 
     # random generator for numpy: cannot use jax due to synchronization
     train_generator = np.random.default_rng(42)
@@ -200,7 +194,7 @@ def main():
         t = time.time()
 
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)  # shard preloaded data
-        model, opt_state, loss = step_fn(model, optim, opt_state, X, y, fwd_key, sharding)
+        model, opt_state, loss = step_fn(model, optim, opt_state, X, y, fwd_key)
         X, y = load_train_batches()  # async load
         loss = float(loss.mean())  # wait for jax to sync
 
