@@ -41,6 +41,7 @@ class Block(eqx.Module):
         else:
             mlp_key, attn_key = jr.split(key)
         x_normed = eqx.filter_vmap(self.lnorm_attn)(x).astype(self.dtype)
+        x_normed = jnp.nan_to_num(x_normed)  # make sure the softmax is well defined
         x = x + self.attn(
             query=x_normed,
             key_=x_normed,
@@ -77,7 +78,7 @@ class GPT(eqx.Module):
             config.context_len, config.n_embed, key=k1, dtype=self.dtype
         )
         self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layers)]
-        self.final_norm = eqx.nn.LayerNorm(config.n_embed, use_bias=False, use_weight=False)
+        self.final_norm = eqx.nn.LayerNorm(config.n_embed)
         self.config = config
 
     def lm_head(self, x):
@@ -89,30 +90,45 @@ class GPT(eqx.Module):
         targets: Int[Array, "ctx"] | None = None,
         key: PRNGKeyArray | None = None,
     ):
-        x = eqx.filter_vmap(self.tok_embed)(idx) + eqx.filter_vmap(self.pos_embed)(
-            jnp.arange(len(idx))
-        )
-        if key is None:
-            key = jr.PRNGKey(0)  # inference, i guess, so dummy key
-        keys = jr.split(key, len(self.blocks))
-        for block, bkey in zip(self.blocks, keys):  # todo: scan over layers
+        ctx_len = self.config.context_len
+        input_len = idx.shape[0]
+
+        assert targets is None or targets.shape[0] == input_len, "Input & target lengths must match"
+
+        if input_len < ctx_len:  # pad with nans if too short
+            idx_padded = jnp.pad(idx, (0, ctx_len - input_len))
+        else:  # otherwise, truncate
+            idx_padded = idx[-ctx_len:]
+
+        # Embed tokens and positions
+        pos = jnp.arange(ctx_len)
+        x = eqx.filter_vmap(self.tok_embed)(idx_padded) + eqx.filter_vmap(self.pos_embed)(pos)
+        x = x.at[input_len:].set(jnp.nan)  # mask out padding
+
+        key = jr.PRNGKey(0) if key is None else key
+        for block, bkey in zip(self.blocks, jr.split(key, len(self.blocks))):
             x = block(x, key=bkey)
         x = eqx.filter_vmap(self.final_norm)(x).astype(self.dtype)
+
         if targets is not None:
             logits = eqx.filter_vmap(self.lm_head)(x)
             labels = jax.nn.one_hot(targets, self.config.vocab_size, dtype=self.dtype)
             log_probs = jax.nn.log_softmax(logits)
-            loss = -jnp.sum(labels * log_probs) / self.config.context_len
+            loss = -jnp.sum(jnp.nan_to_num(labels * log_probs, nan=0)) / input_len
         else:
-            logits = self.lm_head(x[-1])
+            # Compute logits only of the requested (last) token if inference
+            logits = self.lm_head(x[input_len - 1])
             loss = None
+
         return logits, loss
 
-    def generate(self, idx, key, max_new_tokens=64):
-        forward = eqx.nn.inference_mode(self)
 
-        for _ in range(max_new_tokens):
-            logits, _ = forward(idx, key=key)
-            idx_next = jr.categorical(logits=logits, key=key)
-            idx = jnp.concatenate([idx, jnp.array([idx_next])])
-            yield idx_next
+def generate(self, idx, key, max_new_tokens=64):
+    forward = eqx.nn.inference_mode(self)
+
+    for _ in range(max_new_tokens):
+        key, subkey = jr.split(key)
+        logits, _ = (forward)(idx, key=key)
+        idx_next = jr.categorical(logits=logits, key=subkey)
+        idx = jnp.concatenate([idx, jnp.array([idx_next])])
+        yield idx_next
