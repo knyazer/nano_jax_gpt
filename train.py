@@ -85,7 +85,12 @@ def get_batches(split: str, rng: np.random.Generator, shape: tuple):
 def loss_fn(
     model: GPT, X: Int[Array, "batch ctx"], y: Int[Array, "batch ctx"], key: PRNGKeyArray | None
 ):
-    return eqx.filter_vmap(model)(X, y, key)[1].mean()
+    low_p_model = jax.tree.map(  # lower the model precision for the forward pass
+        lambda x: x.astype(jnp.bfloat16) if eqx.is_inexact_array(x) else x,
+        model,
+        is_leaf=eqx.is_inexact_array,
+    )
+    return eqx.filter_vmap(low_p_model)(X, y, key)[1].astype(jnp.float32).mean()
 
 
 @eqx.filter_jit(donate="all")  # donate="all" allows to reuse args memory: free x2-ish memory
@@ -115,7 +120,7 @@ evals_table = []
 
 def eval_fn(inference_model, eval_generator, batch_size, sharding):
     def evaluate(model, X, y, sharding):
-        # shard the model
+        # shard stuff
         model = eqx.filter_shard(model, sharding.replicate())
         X, y = eqx.filter_shard((X, y), sharding)
 

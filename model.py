@@ -15,13 +15,13 @@ class Block(eqx.Module):
     lnorm_mlp: eqx.nn.LayerNorm
     attn: FlashMultiheadAttention
     dropout: eqx.nn.Dropout
-    dtype: jnp.dtype
 
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3 = jr.split(key, 3)
-        self.dtype = config.dtype
-        self.expand_fc = eqx.nn.Linear(config.n_embed, 4 * config.n_embed, key=k1, dtype=self.dtype)
-        self.proj_fc = eqx.nn.Linear(config.n_embed * 4, config.n_embed, key=k2, dtype=self.dtype)
+        self.expand_fc = eqx.nn.Linear(
+            config.n_embed, 4 * config.n_embed, key=k1, dtype=config.dtype
+        )
+        self.proj_fc = eqx.nn.Linear(config.n_embed * 4, config.n_embed, key=k2, dtype=config.dtype)
         self.lnorm_attn = eqx.nn.LayerNorm(config.n_embed)
         self.lnorm_mlp = eqx.nn.LayerNorm(config.n_embed)
         self.attn = FlashMultiheadAttention(
@@ -29,7 +29,7 @@ class Block(eqx.Module):
             config.n_embed,
             dropout_p=config.dropout,
             key=k3,
-            dtype=self.dtype,
+            dtype=config.dtype,
         )
         self.dropout = eqx.nn.Dropout(config.dropout)
 
@@ -40,7 +40,7 @@ class Block(eqx.Module):
             mlp_key, attn_key = None, None
         else:
             mlp_key, attn_key = jr.split(key)
-        x_normed = eqx.filter_vmap(self.lnorm_attn)(x).astype(self.dtype)
+        x_normed = eqx.filter_vmap(self.lnorm_attn)(x).astype(x.dtype)
         x_normed = jnp.nan_to_num(x_normed)  # make sure the softmax is well defined
         x = x + self.attn(
             query=x_normed,
@@ -50,7 +50,7 @@ class Block(eqx.Module):
         )
 
         def _mlp(x):
-            x_expanded = self.expand_fc(self.lnorm_mlp(x).astype(self.dtype))
+            x_expanded = self.expand_fc(self.lnorm_mlp(x).astype(x.dtype))
             return self.proj_fc(jax.nn.gelu(x_expanded))
 
         x = x + self.dropout(
@@ -62,7 +62,6 @@ class Block(eqx.Module):
 
 class GPT(eqx.Module):
     config: GPTConfig = eqx.field(static=True)
-    dtype: jnp.dtype = eqx.field(static=True)
     tok_embed: eqx.nn.Embedding
     pos_embed: eqx.nn.Embedding
     blocks: list[Block]
@@ -70,12 +69,11 @@ class GPT(eqx.Module):
 
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3, k4 = jr.split(key, 4)
-        self.dtype = config.dtype
         self.tok_embed = eqx.nn.Embedding(
-            config.vocab_size, config.n_embed, key=k2, dtype=self.dtype
+            config.vocab_size, config.n_embed, key=k2, dtype=config.dtype
         )
         self.pos_embed = eqx.nn.Embedding(
-            config.context_len, config.n_embed, key=k1, dtype=self.dtype
+            config.context_len, config.n_embed, key=k1, dtype=config.dtype
         )
         self.blocks = [Block(block_key, config) for block_key in jr.split(k3, config.n_layers)]
         self.final_norm = eqx.nn.LayerNorm(config.n_embed)
@@ -133,7 +131,7 @@ class GPT(eqx.Module):
         key = jr.PRNGKey(0) if key is None else key
         for block, bkey in zip(self.blocks, jr.split(key, len(self.blocks))):
             x = block(x, key=bkey)
-        x = eqx.filter_vmap(self.final_norm)(x).astype(self.dtype)
+        x = eqx.filter_vmap(self.final_norm)(x).astype(x.dtype)
 
         if targets is not None:
             logits = eqx.filter_vmap(self.lm_head)(x).astype(jnp.float32)
