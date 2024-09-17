@@ -24,13 +24,12 @@ initialise_tracking()
 
 # enable fast rng keys, unstable; current jax version: 0.4.31 (check the uv lock file)
 # when I am running on TPU I install nightly, so I don't know what exact commit it will be.
-# To figure it out, just look up the time of the run in the logs and check the commit at that time.
 jax.config.update("jax_threefry_partitionable", True)  # noqa
 
 # enable compilation cache
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")  # noqa
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.1)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 
 parser = argparse.ArgumentParser(description="Script to run with a model argument")
@@ -86,7 +85,7 @@ def loss_fn(
     model: GPT, X: Int[Array, "batch ctx"], y: Int[Array, "batch ctx"], key: PRNGKeyArray | None
 ):
     low_p_model = jax.tree.map(  # lower the model precision for the forward pass
-        lambda x: x.astype(jnp.bfloat16) if eqx.is_inexact_array(x) else x,
+        lambda x: x.astype(jnp.float32) if eqx.is_inexact_array(x) else x,
         model,
         is_leaf=eqx.is_inexact_array,
     )

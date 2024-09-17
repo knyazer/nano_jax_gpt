@@ -113,37 +113,42 @@ class GPT(eqx.Module):
         targets: Int[Array, "ctx"] | None = None,
         key: PRNGKeyArray | None = None,
     ):
-        ctx_len = self.config.context_len
-        input_len = idx.shape[0]
+        # enable strict dtype promotion, easier to debug mixed precision issues
+        with jax.numpy_dtype_promotion("strict"):
+            ctx_len = self.config.context_len
+            input_len = idx.shape[0]
 
-        assert targets is None or targets.shape[0] == input_len, "Input & target lengths must match"
+            assert (
+                targets is None or targets.shape[0] == input_len
+            ), "Input & target lengths must match"
 
-        if input_len < ctx_len:  # pad with nans if too short
-            idx_padded = jnp.pad(idx, (0, ctx_len - input_len))
-        else:  # otherwise, truncate
-            idx_padded = idx[-ctx_len:]
+            if input_len < ctx_len:  # pad with nans if too short
+                idx_padded = jnp.pad(idx, (0, ctx_len - input_len))
+            else:  # otherwise, truncate
+                idx_padded = idx[-ctx_len:]
 
-        # Embed tokens and positions
-        pos = jnp.arange(ctx_len)
-        x = eqx.filter_vmap(self.tok_embed)(idx_padded) + eqx.filter_vmap(self.pos_embed)(pos)
-        x = x.at[input_len:].set(jnp.nan)  # mask out padding
+            # Embed tokens and positions
+            pos = jnp.arange(ctx_len)
+            x = eqx.filter_vmap(self.tok_embed)(idx_padded) + eqx.filter_vmap(self.pos_embed)(pos)
+            x = x.at[input_len:].set(jnp.nan)  # mask out padding
 
-        key = jr.PRNGKey(0) if key is None else key
-        for block, bkey in zip(self.blocks, jr.split(key, len(self.blocks))):
-            x = block(x, key=bkey)
-        x = eqx.filter_vmap(self.final_norm)(x).astype(x.dtype)
+            key = jr.PRNGKey(0) if key is None else key
+            for block, bkey in zip(self.blocks, jr.split(key, len(self.blocks))):
+                x = block(x, key=bkey)
+            x = eqx.filter_vmap(self.final_norm)(x).astype(x.dtype)
 
-        if targets is not None:
-            logits = eqx.filter_vmap(self.lm_head)(x).astype(jnp.float32)
-            labels = jax.nn.one_hot(targets, self.config.vocab_size, dtype=jnp.float32)
-            log_probs = jax.nn.log_softmax(logits)
-            loss = -jnp.sum(jnp.nan_to_num(labels * log_probs, nan=0)) / input_len
-        else:
-            # Compute logits only of the requested (last) token if inference
-            logits = self.lm_head(x[input_len - 1])
-            loss = None
+            if targets is not None:
+                # loss is always computed with 'full' dtype, cuz softmax
+                logits = eqx.filter_vmap(self.lm_head)(x).astype(jnp.float32)
+                labels = jax.nn.one_hot(targets, self.config.vocab_size, dtype=jnp.float32)
+                log_probs = jax.nn.log_softmax(logits)
+                loss = -jnp.sum(jnp.nan_to_num(labels * log_probs, nan=0)) / input_len
+            else:
+                # Compute logits only of the requested (last) token if inference
+                logits = self.lm_head(x[input_len - 1])
+                loss = None
 
-        return logits, loss
+            return logits, loss
 
     def generate(self, idx, key, max_new_tokens=64):
         forward = eqx.nn.inference_mode(self)
