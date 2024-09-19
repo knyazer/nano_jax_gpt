@@ -19,8 +19,6 @@ class Block(eqx.Module):
     attn: FlashMultiheadAttention
     dropout: eqx.nn.Dropout
     config: Any
-    ftd1: jax.Array
-    ftd2: jax.Array
 
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3 = jr.split(key, 3)
@@ -39,18 +37,9 @@ class Block(eqx.Module):
         )
         self.dropout = eqx.nn.Dropout(config.dropout)
         self.config = config
-        self.ftd1 = jnp.zeros((config.n_embed,), dtype=config.dtype)
-        self.ftd2 = jnp.zeros((config.n_embed,), dtype=config.dtype)
-
-    def full_token_dropout(self, x, key, replace=0):
-        if key is None:
-            return x
-        q = 1 - jax.lax.stop_gradient(0.04) / (2 * self.config.n_layers)
-        mask = jr.bernoulli(key, q, x.shape[0])
-        return jnp.where(einops.repeat(mask, f"... -> ... {x.shape[1]}"), x, replace)
 
     def __call__(
-        self, x: Float[Array, "ctx emb"], key: PRNGKeyArray | None = None, pkey=None
+        self, x: Float[Array, "ctx emb"], key: PRNGKeyArray | None = None
     ) -> Float[Array, "ctx emb"]:
         if key is None:
             mlp_key, attn_key, d_key_1, d_key_2 = None, None, None, None
@@ -59,7 +48,7 @@ class Block(eqx.Module):
 
         x_normed = eqx.filter_vmap(self.lnorm_attn)(x).astype(x.dtype)
         x_normed = jnp.nan_to_num(x_normed)  # make sure the softmax is well defined
-        x = self.full_token_dropout(x, d_key_1, self.ftd1) + self.attn(
+        x = x + self.attn(
             query=x_normed,
             key_=x_normed,
             value=x_normed,
@@ -70,7 +59,7 @@ class Block(eqx.Module):
             x_expanded = self.expand_fc(self.lnorm_mlp(x).astype(x.dtype))
             return self.proj_fc(jax.nn.gelu(x_expanded))
 
-        x = self.full_token_dropout(x, d_key_2, self.ftd2) + self.dropout(
+        x = x + self.dropout(
             eqx.filter_vmap(_mlp)(x),
             key=mlp_key,
         )
@@ -132,9 +121,6 @@ class GPT(eqx.Module):
     ):
         # enable strict dtype promotion, easier to debug mixed precision issues
         with jax.numpy_dtype_promotion("strict"):
-            pkey = None
-            if key is not None:
-                pkey, key = jr.split(key)
             ctx_len = self.config.context_len
             input_len = idx.shape[0]
 
