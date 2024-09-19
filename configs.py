@@ -9,7 +9,7 @@ class GPTConfig(eqx.Module):
     n_layers: int = 6
     n_heads: int = 6
     n_embed: int = 384
-    dropout: float = 0.2
+    dropout: float = 0.1
     dtype: jnp.dtype = jnp.float32
 
     @classmethod
@@ -74,8 +74,8 @@ class TrainConfig(eqx.Module):
 class RunConfig(eqx.Module):
     n_devices: int = 1  # number of devices available
     times_to_checkpoint: int = 2  # how many times to checkpoint throughout the training
-    times_to_eval: int = 10  # how many times to eval throughout training
-    n_batches_in_eval: int = 20  # how many batches in eval
+    times_to_eval: int = 50  # how many times to eval throughout training
+    n_batches_in_eval: int = 50  # how many batches in eval
 
     def __post_init__(self):
         self.n_devices = jax.device_count()

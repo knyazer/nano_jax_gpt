@@ -16,13 +16,14 @@ def default_floating_dtype():
 
 @filter_jit
 def causal_dot_product_attention(q, k, v):
-    try:
-        if jax.device_count(backend="gpu") > 0:
-            return gpu_attention.mha(q, k, v, jnp.isnan(q), causal=True, block_q=32, block_k=32)
-    except Exception:
-        ...
+    with jax.numpy_dtype_promotion("standard"):
+        try:
+            if jax.device_count(backend="gpu") > 0:
+                return gpu_attention.mha(q, k, v, jnp.isnan(q), causal=True, block_q=32, block_k=32)
+        except Exception:
+            ...
 
-    return fallback_dot_product_attention(q, k, v, is_causal=True)
+        return fallback_dot_product_attention(q, k, v, is_causal=True)
 
 
 def dot_product_attention(

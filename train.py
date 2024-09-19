@@ -85,7 +85,7 @@ def loss_fn(
     model: GPT, X: Int[Array, "batch ctx"], y: Int[Array, "batch ctx"], key: PRNGKeyArray | None
 ):
     low_p_model = jax.tree.map(  # lower the model precision for the forward pass
-        lambda x: x.astype(jnp.float32) if eqx.is_inexact_array(x) else x,
+        lambda x: x.astype(jnp.bfloat16) if eqx.is_inexact_array(x) else x,
         model,
         is_leaf=eqx.is_inexact_array,
     )
@@ -136,10 +136,11 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
     eval_loss = float(eqx.filter_jit(evaluate)(inference_model, eval_x, eval_y, sharding).mean())
 
     # generate a continuation for some random text, and record it to wandb
-    test_sample = get_batches("test", np.random.default_rng(11), shape=(1,))[0][0]
-    out = inference_model.generate(idx=test_sample, key=jr.key(42))
-    text = decode([int(x) for x in out])
-    evals_table.append([text])
+    if False:
+        test_sample = get_batches("test", np.random.default_rng(11), shape=(1,))[0][0]
+        out = inference_model.generate(idx=test_sample, key=jr.key(42))
+        text = decode([int(x) for x in out])
+        evals_table.append([text])
     wandb.log({"text": wandb.Table(["text"], data=evals_table), "eval_loss": eval_loss})
     return eval_loss
 
