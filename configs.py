@@ -9,7 +9,7 @@ class GPTConfig(eqx.Module):
     n_layers: int = 6
     n_heads: int = 6
     n_embed: int = 384
-    dropout: float = 0.1
+    dropout: float = 0.2
     dtype: jnp.dtype = jnp.float32
 
     @classmethod
