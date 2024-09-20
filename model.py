@@ -20,7 +20,6 @@ class Block(eqx.Module):
     attn: FlashMultiheadAttention
     dropout: eqx.nn.Dropout
     config: Any
-    zero: Any
 
     def __init__(self, key: PRNGKeyArray, config: GPTConfig):
         k1, k2, k3 = jr.split(key, 3)
@@ -39,7 +38,6 @@ class Block(eqx.Module):
         )
         self.dropout = eqx.nn.Dropout(config.dropout)
         self.config = config
-        self.zero = jr.normal(k3, (config.n_embed,), dtype=config.dtype) * 0.02
 
     def __call__(
         self, x: Float[Array, "ctx emb"], key: PRNGKeyArray | None = None
@@ -53,10 +51,10 @@ class Block(eqx.Module):
         x_normed = jnp.nan_to_num(x_normed)  # make sure the softmax is well defined
 
         free_mask = jnp.tile(
-            jnp.arange(self.config.n_embed) < int(self.config.n_embed * 0.05),
+            jnp.arange(self.config.n_embed) < int(self.config.n_embed * 0.1),
             (self.config.context_len, 1),
         )  # shape: (256, 384)
-        zero_value = jnp.tile(self.zero, (self.config.context_len, 1))
+        zero_value = jnp.tile(0.0, (self.config.context_len, 1))
         x = jnp.where(free_mask, zero_value, x) + self.attn(
             query=x_normed,
             key_=x_normed,
