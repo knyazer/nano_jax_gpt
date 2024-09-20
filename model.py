@@ -39,7 +39,7 @@ class Block(eqx.Module):
         )
         self.dropout = eqx.nn.Dropout(config.dropout)
         self.config = config
-        self.zero = jr.normal(k3, (config.context_len, config.n_embed), dtype=config.dtype)
+        self.zero = jr.normal(k3, (config.n_embed,), dtype=config.dtype) * 0.02
 
     def __call__(
         self, x: Float[Array, "ctx emb"], key: PRNGKeyArray | None = None
@@ -56,7 +56,8 @@ class Block(eqx.Module):
             jnp.arange(self.config.n_embed) < int(self.config.n_embed * 0.05),
             (self.config.context_len, 1),
         )  # shape: (256, 384)
-        x = jnp.where(free_mask, self.zero, x) + self.attn(
+        zero_value = jnp.tile(self.zero, (self.config.context_len, 1))
+        x = jnp.where(free_mask, zero_value, x) + self.attn(
             query=x_normed,
             key_=x_normed,
             value=x_normed,
