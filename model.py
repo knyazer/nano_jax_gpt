@@ -54,8 +54,7 @@ class Block(eqx.Module):
             jnp.arange(self.config.n_embed) < int(self.config.n_embed * 0.1),
             (self.config.context_len, 1),
         )  # shape: (256, 384)
-        zero_value = jnp.tile(0.0, (self.config.context_len, 1))
-        x = jnp.where(free_mask, zero_value, x) + self.attn(
+        x = jnp.where(free_mask, 0.0, x) + self.attn(
             query=x_normed,
             key_=x_normed,
             value=x_normed,
