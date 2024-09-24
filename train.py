@@ -14,6 +14,7 @@ from jax.experimental import mesh_utils
 from jax_smi import initialise_tracking
 from jaxtyping import Array, Int, PRNGKeyArray
 from tqdm import tqdm
+from transformers.generation.flax_utils import Any
 
 from configs import GPTConfig, RunConfig, TrainConfig
 from helpers import WandbLogger
@@ -138,18 +139,99 @@ def main():
     model = GPT.make(jr.key(0), model_config)
     model_params = eqx.filter(model, eqx.is_array)
 
-    class SGD:
-        def __init__(self, learning_rate):
-            self.learning_rate = learning_rate
+    class AdamWState(eqx.Module):
+        m: Any
+        v: Any
+        t: Any
+        prev_grads: Any
 
-        def init(self, _):
-            return None
+    class AdamW(eqx.Module):
+        lr_config: dict = eqx.field(static=True)
+        weight_decay: float = eqx.field(static=True)
+        global_norm: float = eqx.field(static=True)
+        beta1: float = eqx.field(static=True)
+        beta2: float = eqx.field(static=True)
+        epsilon: float = eqx.field(static=True)
 
-        def update(self, grads, state, _):
-            updates = jax.tree.map(lambda g: -self.learning_rate * g, grads)
-            return updates, state
+        def __init__(self, lr_config, weight_decay, global_norm):
+            self.lr_config = lr_config
+            self.weight_decay = weight_decay
+            self.global_norm = global_norm
+            self.beta1 = 0.9
+            self.beta2 = 0.999
+            self.epsilon = 1e-8
 
-    optim = SGD(learning_rate=0.01)
+        def init(self, params):
+            return AdamWState(
+                m=jax.tree.map(jnp.zeros_like, params),
+                v=jax.tree.map(jnp.zeros_like, params),
+                t=jnp.array(0, dtype=jnp.int32),
+                prev_grads=jax.tree.map(jnp.zeros_like, params),
+            )
+
+        def warmup_cosine_decay(self, t):
+            warmup_steps = self.lr_config["warmup_steps"]
+            decay_steps = self.lr_config["decay_steps"]
+            init_value = self.lr_config["init_value"]
+            peak_value = self.lr_config["peak_value"]
+            end_value = self.lr_config["end_value"]
+
+            def warmup(t):
+                return init_value + (peak_value - init_value) * (t / warmup_steps)
+
+            def decay(t):
+                t = t - warmup_steps
+                total_decay_steps = decay_steps - warmup_steps
+                cosine_decay = 0.5 * (1.0 + jnp.cos(jnp.pi * t / total_decay_steps))
+                return end_value + (peak_value - end_value) * cosine_decay
+
+            lr = jax.lax.cond(t < warmup_steps, warmup, decay, t)
+            return lr
+
+        def update(self, grads, state, params):
+            global_l2_norm = jnp.sqrt(
+                sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), grads)))
+            )
+            grads = jax.tree.map(lambda g: g * (self.global_norm / (global_l2_norm + 1e-6)), grads)
+
+            t = state.t + 1
+            lr = self.warmup_cosine_decay(t)
+
+            if t % 2 == 0:
+                # Heun's method
+                def update_moment(m, g):
+                    return self.beta1 * m + (1.0 - self.beta1) * g
+
+                def update_velocity(v, g):
+                    return self.beta2 * v + (1.0 - self.beta2) * (g**2)
+
+                new_m = jax.tree.map(update_moment, state.m, grads)
+                new_v = jax.tree.map(update_velocity, state.v, grads)
+
+                def compute_update(m, v, p):
+                    m_hat = m / (1.0 - self.beta1**t)
+                    v_hat = v / (1.0 - self.beta2**t)
+                    update = -lr * m_hat / (jnp.sqrt(v_hat) + self.epsilon)
+                    if eqx.is_inexact_array(p) and p.ndim >= 2:
+                        update -= lr * self.weight_decay * p
+                    return update
+
+                updates = jax.tree.map(compute_update, new_m, new_v, params)
+
+                new_state = AdamWState(m=new_m, v=new_v, t=t, prev_grads=grads)
+            else:
+                # Euler's method for the first estimate
+                updates = jax.tree.map(lambda g: -lr * g, grads)
+
+                new_state = AdamWState(m=state.m, v=state.v, t=t, prev_grads=grads)
+
+            return updates, new_state
+
+    optim = AdamW(
+        lr_config=train_config.lr_config,
+        weight_decay=train_config.weight_decay,
+        global_norm=train_config.global_norm,
+    )
 
     n_model_params = jax.tree.map(lambda x: x.size, model_params)
     n_model_params = sum(jax.tree.leaves(n_model_params))

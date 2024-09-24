@@ -43,7 +43,7 @@ class Block(eqx.Module):
         if key is None:
             mlp_key, attn_key = None, None
         else:
-            mlp_key, attn_key = jr.split(key, 4)
+            mlp_key, attn_key = jr.split(key, 2)
 
         x_normed = eqx.filter_vmap(self.lnorm_attn)(x).astype(x.dtype)
         x_normed = jnp.nan_to_num(x_normed)  # make sure the softmax is well defined
