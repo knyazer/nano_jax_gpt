@@ -144,6 +144,7 @@ def main():
         v: Any
         t: Any
         prev_grads: Any
+        prev_prev_grads: Any
 
     class AdamW(eqx.Module):
         lr_config: dict = eqx.field(static=True)
@@ -167,6 +168,7 @@ def main():
                 v=jax.tree.map(jnp.zeros_like, params),
                 t=jnp.array(0, dtype=jnp.int32),
                 prev_grads=jax.tree.map(jnp.zeros_like, params),
+                prev_prev_grads=jax.tree.map(jnp.zeros_like, params),
             )
 
         def warmup_cosine_decay(self, t):
@@ -194,36 +196,39 @@ def main():
             )
             grads = jax.tree.map(lambda g: g * (self.global_norm / (global_l2_norm + 1e-6)), grads)
 
+            # Compute the linear multistep average of the current, previous, and previous-previous gradients
+            avg_grads = jax.tree.map(
+                lambda g, pg, ppg: 1.2 * g - 0.2 * pg,
+                grads,
+                state.prev_grads,
+                state.prev_prev_grads,
+            )
+
+            def update_moment(m, g):
+                return self.beta1 * m + (1.0 - self.beta1) * g
+
+            def update_velocity(v, g):
+                return self.beta2 * v + (1.0 - self.beta2) * (g**2)
+
+            new_m = jax.tree.map(update_moment, state.m, avg_grads)
+            new_v = jax.tree.map(update_velocity, state.v, avg_grads)
+
             t = state.t + 1
             lr = self.warmup_cosine_decay(t)
 
-            if t % 2 == 0:
-                # Heun's method
-                def update_moment(m, g):
-                    return self.beta1 * m + (1.0 - self.beta1) * g
+            def compute_update(m, v, p):
+                m_hat = m / (1.0 - self.beta1**t)
+                v_hat = v / (1.0 - self.beta2**t)
+                update = -lr * m_hat / (jnp.sqrt(v_hat) + self.epsilon)
+                if eqx.is_inexact_array(p) and p.ndim >= 2:
+                    update -= lr * self.weight_decay * p
+                return update
 
-                def update_velocity(v, g):
-                    return self.beta2 * v + (1.0 - self.beta2) * (g**2)
+            updates = jax.tree.map(compute_update, new_m, new_v, params)
 
-                new_m = jax.tree.map(update_moment, state.m, grads)
-                new_v = jax.tree.map(update_velocity, state.v, grads)
-
-                def compute_update(m, v, p):
-                    m_hat = m / (1.0 - self.beta1**t)
-                    v_hat = v / (1.0 - self.beta2**t)
-                    update = -lr * m_hat / (jnp.sqrt(v_hat) + self.epsilon)
-                    if eqx.is_inexact_array(p) and p.ndim >= 2:
-                        update -= lr * self.weight_decay * p
-                    return update
-
-                updates = jax.tree.map(compute_update, new_m, new_v, params)
-
-                new_state = AdamWState(m=new_m, v=new_v, t=t, prev_grads=grads)
-            else:
-                # Euler's method for the first estimate
-                updates = jax.tree.map(lambda g: -lr * g, grads)
-
-                new_state = AdamWState(m=state.m, v=state.v, t=t, prev_grads=grads)
+            new_state = AdamWState(
+                m=new_m, v=new_v, t=t, prev_grads=grads, prev_prev_grads=state.prev_grads
+            )
 
             return updates, new_state
 
