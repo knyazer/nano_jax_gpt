@@ -10,7 +10,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.sharding as jshard
 import numpy as np
-import optax
 from jax.experimental import mesh_utils
 from jax_smi import initialise_tracking
 from jaxtyping import Array, Int, PRNGKeyArray
@@ -22,15 +21,11 @@ from model import GPT
 
 initialise_tracking()
 
-# enable fast rng keys, unstable; current jax version: 0.4.31 (check the uv lock file)
-# when I am running on TPU I install nightly, so I don't know what exact commit it will be.
 jax.config.update("jax_threefry_partitionable", True)  # noqa
 
-# enable compilation cache
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")  # noqa
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-
 
 parser = argparse.ArgumentParser(description="Script to run with a model argument")
 parser.add_argument(
@@ -49,7 +44,7 @@ train_config: TrainConfig = TrainConfig.from_preset(args.model)
 run_config: RunConfig = RunConfig.from_preset(args.model)
 
 if train_config.dataset_name == "shakespear-char":
-    from prepare_shakespear import decode  # type: ignore
+    from prepare_shakespear import decode
 elif train_config.dataset_name == "openwebtext":
     import tiktoken
 
@@ -84,7 +79,7 @@ def get_batches(split: str, rng: np.random.Generator, shape: tuple):
 def loss_fn(
     model: GPT, X: Int[Array, "batch ctx"], y: Int[Array, "batch ctx"], key: PRNGKeyArray | None
 ):
-    low_p_model = jax.tree.map(  # lower the model precision for the forward pass
+    low_p_model = jax.tree.map(
         lambda x: x.astype(jnp.bfloat16) if eqx.is_inexact_array(x) else x,
         model,
         is_leaf=eqx.is_inexact_array,
@@ -92,9 +87,8 @@ def loss_fn(
     return eqx.filter_vmap(low_p_model)(X, y, key)[1].astype(jnp.float32).mean()
 
 
-@eqx.filter_jit(donate="all")  # donate="all" allows to reuse args memory: free x2-ish memory
+@eqx.filter_jit(donate="all")
 def step_fn(model, optim, opt_state, X, y, key):
-    # accumulation function: just compute the gradient and the loss
     def grad_acc_scan_fn(key: PRNGKeyArray, data: tuple):
         loss, grads = eqx.filter_value_and_grad(loss_fn)(
             model, *data, key=jr.split(key, data[0].shape[:-1])
@@ -103,11 +97,9 @@ def step_fn(model, optim, opt_state, X, y, key):
 
     _, (loss, grads) = eqxi.scan(grad_acc_scan_fn, key, (X, y), kind="lax")
 
-    # compute the mean loss and grads from the accumulated values
     loss = jax.tree.map(lambda x: jnp.mean(x), loss, is_leaf=eqx.is_inexact_array_like)
     grads = jax.tree.map(lambda x: jnp.mean(x, axis=0), grads, is_leaf=eqx.is_inexact_array_like)
 
-    # step the model
     updates, opt_state = optim.update(grads, opt_state, model)
     model = eqx.apply_updates(model, updates)
 
@@ -119,15 +111,13 @@ evals_table = []
 
 def eval_fn(inference_model, eval_generator, batch_size, sharding):
     def evaluate(model, X, y, sharding):
-        # shard stuff
         model = eqx.filter_shard(model, sharding.replicate())
         X, y = eqx.filter_shard((X, y), sharding)
 
-        # accumulate loss for requested number of batches
         _, losses = jax.lax.scan(
             eqx.Partial(lambda _, data: (None, loss_fn(model, *data, key=None))), None, (X, y)
         )
-        return losses.astype(jnp.float32).mean()  # return the mean
+        return losses.astype(jnp.float32).mean()
 
     eval_x, eval_y = get_batches(
         "test", eval_generator, shape=(run_config.n_batches_in_eval, batch_size)
@@ -135,7 +125,6 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
     eval_x, eval_y = eqx.filter_shard((jnp.array(eval_x), jnp.array(eval_y)), sharding)
     eval_loss = float(eqx.filter_jit(evaluate)(inference_model, eval_x, eval_y, sharding).mean())
 
-    # generate a continuation for some random text, and record it to wandb
     if False:
         test_sample = get_batches("test", np.random.default_rng(11), shape=(1,))[0][0]
         out = inference_model.generate(idx=test_sample, key=jr.key(42))
@@ -149,18 +138,19 @@ def main():
     model = GPT.make(jr.key(0), model_config)
     model_params = eqx.filter(model, eqx.is_array)
 
-    optim = optax.apply_if_finite(
-        optax.chain(
-            optax.clip_by_global_norm(train_config.global_norm),
-            optax.adamw(
-                optax.warmup_cosine_decay_schedule(**train_config.lr_config),
-                weight_decay=train_config.weight_decay,
-                # we decay only the actual weights, biases and norms are not decayed
-                mask=lambda p: jax.tree.map(lambda x: len(x.shape) >= 2, p),
-            ),
-        ),
-        max_consecutive_errors=5,
-    )
+    class SGD:
+        def __init__(self, learning_rate):
+            self.learning_rate = learning_rate
+
+        def init(self, _):
+            return None
+
+        def update(self, grads, state, _):
+            updates = jax.tree.map(lambda g: -self.learning_rate * g, grads)
+            return updates, state
+
+    optim = SGD(learning_rate=0.01)
+
     n_model_params = jax.tree.map(lambda x: x.size, model_params)
     n_model_params = sum(jax.tree.leaves(n_model_params))
 
@@ -168,24 +158,21 @@ def main():
     opt_state = optim.init(model_params)
     eval_loss = float(jnp.nan)
 
-    # we partition the data by the batch dimension
-    devices = mesh_utils.create_device_mesh((1, jax.device_count(), 1))  # grad_accum x batch x data
+    devices = mesh_utils.create_device_mesh((1, jax.device_count(), 1))
 
-    # sharding stuff
     sharding = jshard.PositionalSharding(devices)
     replicated = sharding.replicate()
     model, opt_state = eqx.filter_shard((model, opt_state), replicated)
 
-    # random generator for numpy: cannot use jax due to synchronization
     train_generator = np.random.default_rng(42)
     eval_generator = np.random.default_rng(69)
 
     def checkpoint(i):
-        Path("checkpoints").mkdir(exist_ok=True)  # create directory if not there
+        Path("checkpoints").mkdir(exist_ok=True)
         eqx.tree_serialise_leaves(f"checkpoints/model_{i}.eqx", model)
         wandb.log_artifact("checkpoint", f"checkpoints/model_{i}.eqx")
 
-    def load_train_batches():  # simpler function to load train batches
+    def load_train_batches():
         return get_batches(
             "train",
             train_generator,
@@ -195,36 +182,32 @@ def main():
             ),
         )
 
-    X, y = load_train_batches()  # preload, so that later we can do async
+    X, y = load_train_batches()
     for i in (pbar := tqdm(range(train_config.train_for))):
         data_key, fwd_key = jr.split(jr.key(i))
 
         t = time.time()
 
-        X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)  # shard preloaded data
+        X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
         model, opt_state, loss = step_fn(model, optim, opt_state, X, y, fwd_key)
-        X, y = load_train_batches()  # async load
-        loss = float(loss.mean())  # wait for jax to sync
+        X, y = load_train_batches()
+        loss = float(loss.mean())
 
-        # log
         pbar.set_description(
             f"loss:{loss:.2f} / eval:{eval_loss:.2f} | step:{(time.time() - t)*1e3:.2f}ms"
         )
         wandb.log({"loss": loss})
 
-        # if we want to checkpoint..
         chckp_freq = train_config.train_for // run_config.times_to_checkpoint
         if i % chckp_freq == chckp_freq - 1:
             checkpoint(i)
 
-        # if we want to eval...
         eval_freq = train_config.train_for // run_config.times_to_eval
         if i % eval_freq == eval_freq - 1:
             eval_loss = eval_fn(
                 eqx.nn.inference_mode(model), eval_generator, train_config.batch_size, sharding
             )
 
-    # checkpoint the final model
     checkpoint(train_config.train_for)
 
 
