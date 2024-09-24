@@ -1,6 +1,5 @@
 from typing import Any
 
-import einops
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -42,9 +41,9 @@ class Block(eqx.Module):
         self, x: Float[Array, "ctx emb"], key: PRNGKeyArray | None = None
     ) -> Float[Array, "ctx emb"]:
         if key is None:
-            mlp_key, attn_key, d_key_1, d_key_2 = None, None, None, None
+            mlp_key, attn_key = None, None
         else:
-            mlp_key, attn_key, d_key_1, d_key_2 = jr.split(key, 4)
+            mlp_key, attn_key = jr.split(key, 4)
 
         x_normed = eqx.filter_vmap(self.lnorm_attn)(x).astype(x.dtype)
         x_normed = jnp.nan_to_num(x_normed)  # make sure the softmax is well defined
