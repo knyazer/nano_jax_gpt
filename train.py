@@ -216,18 +216,10 @@ def main():
             )
 
             def update_moment(m, g):
-                return jax.lax.cond(
-                    jnp.all(m == 0),
-                    lambda: g,
-                    lambda: self.beta1 * m + (1.0 - self.beta1) * g,
-                )
+                return self.beta1 * m + (1.0 - self.beta1) * g
 
             def update_velocity(v, g):
-                return jax.lax.cond(
-                    jnp.all(v == 0),
-                    lambda: g**2,
-                    lambda: self.beta2 * v + (1.0 - self.beta2) * (g**2),
-                )
+                return self.beta2 * v + (1.0 - self.beta2) * (g**2)
 
             new_m = jax.tree.map(update_moment, state.m, grads)
             new_v = jax.tree.map(update_velocity, state.v, grads)
