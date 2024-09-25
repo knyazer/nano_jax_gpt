@@ -194,7 +194,13 @@ def main():
             global_l2_norm = jnp.sqrt(
                 sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), grads)))
             )
-            grads = jax.tree.map(lambda g: g * (self.global_norm / (global_l2_norm + 1e-6)), grads)
+            grads = jax.lax.cond(
+                global_l2_norm > self.global_norm,
+                lambda: jax.tree.map(
+                    lambda g: g * (self.global_norm / (global_l2_norm + 1e-6)), grads
+                ),
+                lambda: grads,
+            )
 
             # grads also differs; grads if its an intermediate step, grads is just grads
             # otherwise it is -prev_grads * 0.5 + grads
@@ -210,10 +216,18 @@ def main():
             )
 
             def update_moment(m, g):
-                return self.beta1 * m + (1.0 - self.beta1) * g
+                return jax.lax.cond(
+                    jnp.all(m == 0),
+                    lambda: g,
+                    lambda: self.beta1 * m + (1.0 - self.beta1) * g,
+                )
 
             def update_velocity(v, g):
-                return self.beta2 * v + (1.0 - self.beta2) * (g**2)
+                return jax.lax.cond(
+                    jnp.all(v == 0),
+                    lambda: g**2,
+                    lambda: self.beta2 * v + (1.0 - self.beta2) * (g**2),
+                )
 
             new_m = jax.tree.map(update_moment, state.m, grads)
             new_v = jax.tree.map(update_velocity, state.v, grads)
