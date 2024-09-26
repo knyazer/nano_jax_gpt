@@ -22,8 +22,6 @@ from model import GPT
 
 initialise_tracking()
 
-jax.config.update("jax_threefry_partitionable", True)  # noqa
-
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")  # noqa
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
