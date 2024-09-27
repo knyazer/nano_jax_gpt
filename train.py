@@ -200,27 +200,14 @@ def main():
                 lambda: grads,
             )
 
-            # grads also differs; grads if its an intermediate step, grads is just grads
-            # otherwise it is -prev_grads * 0.5 + grads
-            # and update is just -old_update + new_update
-
             t = state.t + 1
             lr = self.warmup_cosine_decay(t)
-
-            grads = jax.lax.cond(
-                jnp.mod(t, 2) == 0,
-                lambda: jax.tree.map(lambda g, pg: g * 0.7 + pg * 0.3, grads, state.prev_grads),
-                lambda: grads,
-            )
 
             def update_moment(m, g):
                 return self.beta1 * m + (1.0 - self.beta1) * g
 
             def update_velocity(v, g):
                 return self.beta2 * v + (1.0 - self.beta2) * (g**2)
-
-            new_m = jax.tree.map(update_moment, state.m, grads)
-            new_v = jax.tree.map(update_velocity, state.v, grads)
 
             def compute_update(m, v, p):
                 m_hat = m / (1.0 - self.beta1**t)
@@ -230,22 +217,31 @@ def main():
                     update -= lr * self.weight_decay * p
                 return update
 
-            updates = jax.tree.map(compute_update, new_m, new_v, params)
+            # steps!
+            def step1():
+                # just do a single step with grads
+                new_m = jax.tree.map(update_moment, state.m, grads)
+                new_v = jax.tree.map(update_velocity, state.v, grads)
 
-            new_state = AdamWState(m=new_m, v=new_v, t=t, prev_grads=grads, prev_upd=updates)
+                updates = jax.tree.map(compute_update, new_m, new_v, params)
+                return updates, AdamWState(state.m, state.v, t, grads, updates)  # pass the grads
 
-            def application_update():
-                # updates are just the new updates - old_updates
-                mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
-                return mod_updates, new_state
+            def step2():
+                # we compute the average
+                avg_grads = jax.tree.map(lambda g, pg: g * 0.5 + pg * 0.5, grads, state.prev_grads)
 
-            def heuns_update():
-                # heuns update, we don't update any opt state here, only the update store
-                return updates, AdamWState(
-                    m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=updates
-                )
+                # do a step with the new estimate
+                new_m = jax.tree.map(update_moment, state.m, avg_grads)
+                new_v = jax.tree.map(update_velocity, state.v, avg_grads)
 
-            return jax.lax.cond(jnp.mod(t, 2) == 0, application_update, heuns_update)
+                # compute the update
+                updates = jax.tree.map(compute_update, new_m, new_v, params)
+
+                # we want to apply the update to the original params (step 1), so sub the old update
+                updates = jax.tree.map(lambda u, pu: u - pu, updates, state.prev_upd)
+                return updates, AdamWState(new_m, new_v, t, avg_grads, updates)
+
+            return jax.lax.switch(jnp.mod(t, 2), [step1, step2])
 
     optim = AdamW(
         lr_config=train_config.lr_config,
