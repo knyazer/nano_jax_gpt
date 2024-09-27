@@ -213,13 +213,9 @@ def main():
                 lambda: grads,
             )
 
-            def update_moment(m, g):
-                return self.beta1 * m + (1.0 - self.beta1) * g
-
             def update_velocity(v, g):
                 return self.beta2 * v + (1.0 - self.beta2) * (g**2)
 
-            new_m = jax.tree.map(update_moment, state.m, grads)
             new_v = jax.tree.map(update_velocity, state.v, grads)
 
             def compute_update(m, v, p):
@@ -230,9 +226,9 @@ def main():
                     update -= lr * self.weight_decay * p
                 return update
 
-            updates = jax.tree.map(compute_update, new_m, new_v, params)
+            updates = jax.tree.map(compute_update, grads, new_v, params)
 
-            new_state = AdamWState(m=new_m, v=new_v, t=t, prev_grads=grads, prev_upd=updates)
+            new_state = AdamWState(m=grads, v=new_v, t=t, prev_grads=grads, prev_upd=updates)
 
             def application_update():
                 # updates are just the new updates - old_updates
