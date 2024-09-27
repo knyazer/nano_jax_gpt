@@ -192,13 +192,6 @@ def main():
             global_l2_norm = jnp.sqrt(
                 sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), grads)))
             )
-            grads = jax.lax.cond(
-                global_l2_norm > self.global_norm,
-                lambda: jax.tree.map(
-                    lambda g: g * (self.global_norm / (global_l2_norm + 1e-6)), grads
-                ),
-                lambda: grads,
-            )
 
             # grads also differs; grads if its an intermediate step, grads is just grads
             # otherwise it is -prev_grads * 0.5 + grads
@@ -220,6 +213,13 @@ def main():
 
             def compute_update(g, v, p):
                 v_hat = v / (1.0 - self.beta2**t)
+                g = jax.lax.cond(
+                    global_l2_norm > self.global_norm,
+                    lambda: jax.tree.map(
+                        lambda g: g * (self.global_norm / (global_l2_norm + 1e-6)), g
+                    ),
+                    lambda: g,
+                )
                 update = -lr * g / (jnp.sqrt(v_hat) + self.epsilon)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
                     update -= lr * self.weight_decay * p
