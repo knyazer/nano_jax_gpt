@@ -221,28 +221,16 @@ def main():
 
             def step1():
                 # just do a single step with grads
-                new_m = jax.tree.map(update_moment, state.m, grads)
-                new_v = jax.tree.map(update_velocity, state.v, grads)
+                t_grads = jax.tree.map(lambda g: g * 5 / 6, grads)
+                new_m = jax.tree.map(update_moment, state.m, t_grads)
+                new_v = jax.tree.map(update_velocity, state.v, t_grads)
                 updates = jax.tree.map(compute_update, new_m, new_v, params)
 
                 return updates, AdamWState(state.m, state.v, t, grads, updates)  # pass the grads
 
             def step2():
-                # we compute the average
-                avg_grads = jax.tree.map(lambda g, pg: g * 0.5 + pg * 0.5, grads, state.prev_grads)
-
-                # do a step with the new estimate
-                new_m = jax.tree.map(update_moment, state.m, avg_grads)
-                new_v = jax.tree.map(update_velocity, state.v, avg_grads)
-                updates = jax.tree.map(compute_update, new_m, new_v, params)
-
-                # we want to apply the update to the original params (step 1), so sub the old update
-                updates = jax.tree.map(lambda u, pu: u - pu, updates, state.prev_upd)
-                return updates, AdamWState(state.m, state.v, t, grads, updates)  # still frozen
-
-            def step3():
-                # another (and last) implicit step
-                avg_grads = jax.tree.map(lambda g, pg: g * 0.5 + pg * 0.5, grads, state.prev_grads)
+                # the corrector step
+                avg_grads = jax.tree.map(lambda g, pg: g * 0.6 + pg * 0.4, grads, state.prev_grads)
 
                 new_m = jax.tree.map(update_moment, state.m, avg_grads)
                 new_v = jax.tree.map(update_velocity, state.v, avg_grads)
@@ -251,7 +239,7 @@ def main():
                 updates = jax.tree.map(lambda u, pu: u - pu, updates, state.prev_upd)
                 return updates, AdamWState(new_m, new_v, t, grads, updates)  # unfreeze
 
-            return jax.lax.switch(jnp.mod(t, 5), [step1, step2, step2, step2, step3])
+            return jax.lax.switch(jnp.mod(t, 2), [step1, step2])
 
     optim = AdamW(
         lr_config=train_config.lr_config,
