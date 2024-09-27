@@ -209,23 +209,23 @@ def main():
             def update_velocity(v, g):
                 return self.beta2 * v + (1.0 - self.beta2) * (g**2)
 
-            new_v = jax.tree.map(update_velocity, state.v, grads)
+            clipped_grads = jax.lax.cond(
+                global_l2_norm > self.global_norm,
+                lambda: jax.tree.map(
+                    lambda g: g * (self.global_norm / (global_l2_norm + 1e-6)), grads
+                ),
+                lambda: grads,
+            )
+            new_v = jax.tree.map(update_velocity, state.v, clipped_grads)
 
             def compute_update(g, v, p):
                 v_hat = v / (1.0 - self.beta2**t)
-                g = jax.lax.cond(
-                    global_l2_norm > self.global_norm,
-                    lambda: jax.tree.map(
-                        lambda g: g * (self.global_norm / (global_l2_norm + 1e-6)), g
-                    ),
-                    lambda: g,
-                )
                 update = -lr * g / (jnp.sqrt(v_hat) + self.epsilon)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
                     update -= lr * self.weight_decay * p
                 return update
 
-            updates = jax.tree.map(compute_update, grads, new_v, params)
+            updates = jax.tree.map(compute_update, clipped_grads, new_v, params)
 
             new_state = AdamWState(m=grads, v=new_v, t=t, prev_grads=grads, prev_upd=updates)
 
