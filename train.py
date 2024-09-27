@@ -218,10 +218,9 @@ def main():
 
             new_v = jax.tree.map(update_velocity, state.v, grads)
 
-            def compute_update(m, v, p):
-                m_hat = m / (1.0 - self.beta1**t)
+            def compute_update(g, v, p):
                 v_hat = v / (1.0 - self.beta2**t)
-                update = -lr * m_hat / (jnp.sqrt(v_hat) + self.epsilon)
+                update = -lr * g / (jnp.sqrt(v_hat) + self.epsilon)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
                     update -= lr * self.weight_decay * p
                 return update
