@@ -141,7 +141,8 @@ def main():
         m: Any
         v: Any
         t: Any
-        prev_grads: Any
+        stage1: Any
+        stage2: Any
         prev_upd: Any
 
     class AdamW(eqx.Module):
@@ -165,7 +166,8 @@ def main():
                 m=jax.tree.map(jnp.zeros_like, params),
                 v=jax.tree.map(jnp.zeros_like, params),
                 t=jnp.array(0, dtype=jnp.int32),
-                prev_grads=jax.tree.map(jnp.zeros_like, params),
+                stage1=jax.tree.map(jnp.zeros_like, params),
+                stage2=jax.tree.map(jnp.zeros_like, params),
                 prev_upd=jax.tree.map(jnp.zeros_like, params),
             )
 
@@ -221,16 +223,30 @@ def main():
 
             def step1():
                 # just do a single step with grads
-                t_grads = jax.tree.map(lambda g: g * 0.5, grads)
+                t_grads = jax.tree.map(lambda g: g * 1 / 3, grads)
                 new_m = jax.tree.map(update_moment, state.m, t_grads)
                 new_v = jax.tree.map(update_velocity, state.v, t_grads)
                 updates = jax.tree.map(compute_update, new_m, new_v, params)
 
-                return updates, AdamWState(state.m, state.v, t, grads, updates)  # pass the grads
+                return updates, AdamWState(
+                    state.m, state.v, t, stage1=grads, stage2=t_grads, prev_upd=updates
+                )  # pass the grads
 
             def step2():
+                t_grads = jax.tree.map(lambda g: g * 2 / 3, grads)
+
+                new_m = jax.tree.map(update_moment, state.m, t_grads)
+                new_v = jax.tree.map(update_velocity, state.v, t_grads)
+                updates = jax.tree.map(compute_update, new_m, new_v, params)
+
+                updates = jax.tree.map(lambda u, pu: u - pu, updates, state.prev_upd)
+                return updates, AdamWState(
+                    state.m, state.v, t, stage1=state.stage1, stage2=grads, prev_upd=updates
+                )  # unfreeze
+
+            def step3():
                 avg_grads = jax.tree.map(
-                    lambda g, pg: g * 2 / 3 + pg * 1 / 3, grads, state.prev_grads
+                    lambda g, s1, s2: 0.75 * g + 0.25 * s1, grads, state.stage1, state.stage2
                 )
 
                 new_m = jax.tree.map(update_moment, state.m, avg_grads)
@@ -238,17 +254,9 @@ def main():
                 updates = jax.tree.map(compute_update, new_m, new_v, params)
 
                 updates = jax.tree.map(lambda u, pu: u - pu, updates, state.prev_upd)
-                return updates, AdamWState(state.m, state.v, t, avg_grads, updates)  # unfreeze
-
-            def step3():
-                avg_grads = jax.tree.map(lambda g, pg: (g + pg * 3) / 4.0, grads, state.prev_grads)
-
-                new_m = jax.tree.map(update_moment, state.m, avg_grads)
-                new_v = jax.tree.map(update_velocity, state.v, avg_grads)
-                updates = jax.tree.map(compute_update, new_m, new_v, params)
-
-                updates = jax.tree.map(lambda u, pu: u - pu, updates, state.prev_upd)
-                return updates, AdamWState(new_m, new_v, t, grads, updates)  # unfreeze
+                return updates, AdamWState(
+                    new_m, new_v, t, stage1=avg_grads, stage2=avg_grads, prev_upd=updates
+                )  # unfreeze
 
             return jax.lax.switch(jnp.mod(t, 3), [step1, step2, step3])
 
