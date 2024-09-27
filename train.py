@@ -251,7 +251,7 @@ def main():
                 updates = jax.tree.map(lambda u, pu: u - pu, updates, state.prev_upd)
                 return updates, AdamWState(new_m, new_v, t, grads, updates)  # unfreeze
 
-            return jax.lax.switch(jnp.mod(t, 3), [step1, step2, step3])
+            return jax.lax.switch(jnp.mod(t, 5), [step1, step2, step2, step2, step3])
 
     optim = AdamW(
         lr_config=train_config.lr_config,
