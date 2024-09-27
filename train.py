@@ -99,9 +99,6 @@ def step_fn(model, optim, opt_state, X, y, key):
     loss = jax.tree.map(lambda x: jnp.mean(x), loss, is_leaf=eqx.is_inexact_array_like)
     grads = jax.tree.map(lambda x: jnp.mean(x, axis=0), grads, is_leaf=eqx.is_inexact_array_like)
 
-    updates, opt_state = optim.update(grads, opt_state, model)
-    model = eqx.apply_updates(model, updates)
-
     return model, opt_state, loss.mean()
 
 
@@ -137,122 +134,14 @@ def main():
     model = GPT.make(jr.key(0), model_config)
     model_params = eqx.filter(model, eqx.is_array)
 
-    class AdamWState(eqx.Module):
-        m: Any
-        v: Any
-        t: Any
-        prev_grads: Any
-        prev_upd: Any
+    from opts import Adam, HeunGrad
 
-    class AdamW(eqx.Module):
-        lr_config: dict = eqx.field(static=True)
-        weight_decay: float = eqx.field(static=True)
-        global_norm: float = eqx.field(static=True)
-        beta1: float = eqx.field(static=True)
-        beta2: float = eqx.field(static=True)
-        epsilon: float = eqx.field(static=True)
-
-        def __init__(self, lr_config, weight_decay, global_norm):
-            self.lr_config = lr_config
-            self.weight_decay = weight_decay
-            self.global_norm = global_norm
-            self.beta1 = 0.9
-            self.beta2 = 0.999
-            self.epsilon = 1e-8
-
-        def init(self, params):
-            return AdamWState(
-                m=jax.tree.map(jnp.zeros_like, params),
-                v=jax.tree.map(jnp.zeros_like, params),
-                t=jnp.array(0, dtype=jnp.int32),
-                prev_grads=jax.tree.map(jnp.zeros_like, params),
-                prev_upd=jax.tree.map(jnp.zeros_like, params),
-            )
-
-        def warmup_cosine_decay(self, t):
-            warmup_steps = self.lr_config["warmup_steps"]
-            decay_steps = self.lr_config["decay_steps"]
-            init_value = self.lr_config["init_value"]
-            peak_value = self.lr_config["peak_value"]
-            end_value = self.lr_config["end_value"]
-
-            def warmup(t):
-                return init_value + (peak_value - init_value) * (t / warmup_steps)
-
-            def decay(t):
-                t = t - warmup_steps
-                total_decay_steps = decay_steps - warmup_steps
-                cosine_decay = 0.5 * (1.0 + jnp.cos(jnp.pi * t / total_decay_steps))
-                return end_value + (peak_value - end_value) * cosine_decay
-
-            lr = jax.lax.cond(t < warmup_steps, warmup, decay, t)
-            return lr
-
-        def update(self, grads, state, params):
-            global_l2_norm = jnp.sqrt(
-                sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), grads)))
-            )
-
-            # grads also differs; grads if its an intermediate step, grads is just grads
-            # otherwise it is -prev_grads * 0.5 + grads
-            # and update is just -old_update + new_update
-
-            t = state.t + 1
-            lr = self.warmup_cosine_decay(t)
-
-            grads = jax.lax.cond(
-                jnp.mod(t, 2) == 0,
-                lambda: jax.tree.map(lambda g, pg: g * 0.5 + pg * 0.5, grads, state.prev_grads),
-                lambda: grads,
-            )
-
-            def update_velocity(v, g):
-                return self.beta2 * v + (1.0 - self.beta2) * (g**2)
-
-            clipped_grads = jax.lax.cond(
-                global_l2_norm > self.global_norm,
-                lambda: jax.tree.map(
-                    lambda g: g * (self.global_norm / (global_l2_norm + 1e-6)), grads
-                ),
-                lambda: grads,
-            )
-            new_v = jax.tree.map(update_velocity, state.v, clipped_grads)
-
-            def compute_update(g, v, p):
-                v_hat = v / (1.0 - self.beta2**t)
-                update = -lr * g / (jnp.sqrt(v_hat) + self.epsilon)
-                if eqx.is_inexact_array(p) and p.ndim >= 2:
-                    update -= lr * self.weight_decay * p
-                return update
-
-            updates = jax.tree.map(compute_update, clipped_grads, new_v, params)
-
-            new_state = AdamWState(m=grads, v=new_v, t=t, prev_grads=grads, prev_upd=updates)
-
-            def application_update():
-                # updates are just the new updates - old_updates
-                mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
-                return mod_updates, new_state
-
-            def heuns_update():
-                # heuns update, we don't update any opt state here, only the update store
-                return updates, AdamWState(
-                    m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=updates
-                )
-
-            return jax.lax.cond(jnp.mod(t, 2) == 0, application_update, heuns_update)
-
-    optim = AdamW(
-        lr_config=train_config.lr_config,
-        weight_decay=train_config.weight_decay,
-        global_norm=train_config.global_norm,
-    )
+    opt_state = HeunGrad(Adam())
 
     n_model_params = jax.tree.map(lambda x: x.size, model_params)
     n_model_params = sum(jax.tree.leaves(n_model_params))
 
     print(f"Model has {n_model_params/1_000_000:.2f}M parameters")
-    opt_state = optim.init(model_params)
     eval_loss = float(jnp.nan)
 
     devices = mesh_utils.create_device_mesh((1, jax.device_count(), 1))
@@ -286,7 +175,8 @@ def main():
         t = time.time()
 
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
-        model, opt_state, loss = step_fn(model, optim, opt_state, X, y, fwd_key)
+        updates, opt_state, loss = opt_state.step_with(step_fn, fwd_key)
+        model = eqx.apply_updates(model, updates)
         X, y = load_train_batches()
         loss = float(loss.mean())
 
