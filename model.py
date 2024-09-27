@@ -1,6 +1,7 @@
 from typing import Any
 
 import equinox as eqx
+import equinox.internal as eqxi
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -47,7 +48,12 @@ class Block(eqx.Module):
 
         x_normed = eqx.filter_vmap(self.lnorm_attn)(x).astype(x.dtype)
         x_normed = jnp.nan_to_num(x_normed)  # make sure the softmax is well defined
-        x = x + self.attn(
+
+        free_mask = jnp.tile(
+            jnp.arange(self.config.n_embed) < int(self.config.n_embed * 0.1),
+            (self.config.context_len, 1),
+        )  # shape: (256, 384)
+        x = jnp.where(free_mask, 0.0, x) + self.attn(
             query=x_normed,
             key_=x_normed,
             value=x_normed,
@@ -138,8 +144,22 @@ class GPT(eqx.Module):
             x = x.at[input_len:].set(jnp.nan)  # mask out padding
 
             key = jr.PRNGKey(0) if key is None else key
-            for block, bkey in zip(self.blocks, jr.split(key, len(self.blocks))):
-                x = block(x, key=bkey)
+            blocks_dynamic = eqx.filter(self.blocks, eqx.is_array)
+            blocks_dynamic = jax.tree.map(
+                lambda *b: jnp.stack(b) if b[0] is not None else None,
+                *blocks_dynamic,
+                is_leaf=eqx.is_array,
+            )
+            block_static = eqx.filter(self.blocks[0], lambda x: not eqx.is_array(x))
+
+            def scan_fn(carry, inputs):
+                block_dyn, bkey = inputs
+                block = eqx.combine(block_dyn, block_static)
+                return block(carry, key=bkey), None
+
+            x, _ = eqxi.scan(
+                scan_fn, x, (blocks_dynamic, jr.split(key, len(self.blocks))), kind="lax"
+            )
             x = eqx.filter_vmap(self.final_norm)(x).astype(x.dtype)
 
             if targets is not None:
