@@ -255,7 +255,7 @@ def main():
                 new_v = jax.tree.map(update_velocity, state.v, unscaled_grads)
                 updates = jax.tree.map(compute_update, new_m, new_v, params)
                 return updates, AdamWState(
-                    m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=updates
+                    m=state.m, v=state.v, t=t, prev_grads=unscaled_grads, prev_upd=updates
                 )
 
             return jax.lax.cond(jnp.mod(t, 2) == 0, application_update, heuns_update)
