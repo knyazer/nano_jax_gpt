@@ -214,7 +214,7 @@ def main():
             grads = jax.lax.cond(
                 jnp.mod(t, 2) == 0,
                 lambda: jax.tree.map(lambda g, pg: g * 0.5 + pg * 0.5, grads, state.prev_grads),
-                lambda: jax.tree.map(lambda g: g / (1 - self.beta1), grads),
+                lambda: jax.tree.map(lambda g: 0.5 * g / (1 - self.beta1), grads),
             )
 
             def update_moment(m, g):
