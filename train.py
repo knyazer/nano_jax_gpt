@@ -229,8 +229,8 @@ def main():
             new_v_fast = jax.tree.map(update_velocity, state.v_fast, grads)
 
             def compute_update(m, v, p):
-                m_hat = m / (1.0 - self.beta1**t)
-                v_hat = v / (1.0 - self.beta2**t)
+                m_hat = m / (1.0 - self.beta1 ** (t / 2))
+                v_hat = v / (1.0 - self.beta2 ** (t / 2))
                 # we assume conditioning does not change much - or fixed
                 update = -lr * m_hat / (jnp.sqrt(v_hat) + self.epsilon)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
