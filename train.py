@@ -231,7 +231,7 @@ def main():
                 m_full = m_hat / (1 - self.beta1)  # specifies endpoint of momentum
                 # we assume conditioning does not change much - or fixed
                 if use_full:
-                    update = -lr * m_full / (jnp.sqrt(v_hat) + self.epsilon)
+                    update = -lr * m_full * 0.5 / (jnp.sqrt(v_hat) + self.epsilon)
                 else:
                     update = -lr * m_hat / (jnp.sqrt(v_hat) + self.epsilon)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
