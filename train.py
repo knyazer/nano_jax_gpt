@@ -142,6 +142,7 @@ def main():
     class AdamWState(eqx.Module):
         m: Any
         v: Any
+        v_fast: Any
         t: Any
         prev_grads: Any
         prev_upd: Any
@@ -166,6 +167,7 @@ def main():
             return AdamWState(
                 m=jax.tree.map(jnp.zeros_like, params),
                 v=jax.tree.map(jnp.zeros_like, params),
+                v_fast=jax.tree.map(jnp.zeros_like, params),
                 t=jnp.array(0, dtype=jnp.int32),
                 prev_grads=jax.tree.map(jnp.zeros_like, params),
                 prev_upd=jax.tree.map(jnp.zeros_like, params),
@@ -224,6 +226,7 @@ def main():
 
             new_m = jax.tree.map(update_moment, state.m, grads)
             new_v = jax.tree.map(update_velocity, state.v, grads)
+            new_v_fast = jax.tree.map(update_velocity, state.v_fast, grads)
 
             def compute_update(m, v, p):
                 m_hat = m / (1.0 - self.beta1**t)
@@ -234,19 +237,19 @@ def main():
                     update -= lr * self.weight_decay * p
                 return update
 
-            updates = jax.tree.map(compute_update, new_m, new_v, params)
-
             def application_update():
+                updates = jax.tree.map(compute_update, new_m, new_v, params)
                 # updates are just the new updates - old_updates
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
                 return mod_updates, AdamWState(
-                    m=new_m, v=new_v, t=t, prev_grads=grads, prev_upd=updates
+                    m=new_m, v=new_v, t=t, prev_grads=grads, prev_upd=updates, v_fast=state.v_fast
                 )
 
             def heuns_update():
+                updates = jax.tree.map(compute_update, new_m, new_v_fast, params)
                 # heuns update, we don't update any opt state here, only the update store
                 return updates, AdamWState(
-                    m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=updates
+                    m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=updates, v_fast=new_v_fast
                 )
 
             return jax.lax.cond(jnp.mod(t, 2) == 0, application_update, heuns_update)
