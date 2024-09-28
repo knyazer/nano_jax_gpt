@@ -212,13 +212,12 @@ def main():
 
             t = state.t + 1
             lr = self.warmup_cosine_decay(t)
-            k = jnp.clip(t / 500.0 + 1.0, 1.0, 1.0 / (1.0 - self.beta1))
 
             unscaled_grads = grads
             grads = jax.lax.cond(
                 jnp.mod(t, 2) == 0,
                 lambda: jax.tree.map(lambda g, pg: g * 0.5 + pg * 0.5, grads, state.prev_grads),
-                lambda: jax.tree.map(lambda g: clip(k * g, self.global_norm), grads),
+                lambda: jax.tree.map(lambda g: clip(g * 3, self.global_norm), grads),
             )
 
             def update_moment(m, g):
