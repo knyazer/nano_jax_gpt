@@ -241,14 +241,14 @@ def main():
                 # updates are just the new updates - old_updates
                 # updates are -old + 0.25 * old + 0.75 * new
                 mod_updates = jax.tree.map(
-                    lambda x, y: -x + 0.5 * x + 0.5 * y, state.prev_upd, updates
+                    lambda x, y: -x + 0.25 * x + 0.75 * y, state.prev_upd, updates
                 )
                 return mod_updates, new_state
 
             def heuns_update():
                 # heuns update, we don't update any opt state here, only the update store
                 # rescale it by 2/3, for ralston
-                ralston_updates = jax.tree.map(lambda x: x, updates)
+                ralston_updates = jax.tree.map(lambda x: x * 2 / 3, updates)
                 return ralston_updates, AdamWState(
                     m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=ralston_updates
                 )
