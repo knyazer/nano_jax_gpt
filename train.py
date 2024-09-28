@@ -228,15 +228,10 @@ def main():
             def compute_update(m, v, p, *, use_full=False):
                 m_hat = m / (1.0 - self.beta1**t)
                 v_hat = v / (1.0 - self.beta2**t)
-                m_full = m_hat / (1 - self.beta1)  # specifies endpoint of momentum
                 # we assume conditioning does not change much - or fixed
                 if use_full:
-                    k = jax.lax.cond(
-                        t < 1000,
-                        lambda: 1 - self.beta1,
-                        lambda: jnp.clip(t / 10_000.0, 1 - self.beta1, 1.0),
-                    )
-                    update = -lr * m_full * k / (jnp.sqrt(v_hat) + self.epsilon)
+                    k = jnp.clip(t / 500.0, 1.0, 1.0 / (1.0 - self.beta1))
+                    update = -lr * m_hat * k / (jnp.sqrt(v_hat) + self.epsilon)
                 else:
                     update = -lr * m_hat / (jnp.sqrt(v_hat) + self.epsilon)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
