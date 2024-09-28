@@ -210,6 +210,7 @@ def main():
             t = state.t + 1
             lr = self.warmup_cosine_decay(t)
 
+            unscaled_grads = grads
             grads = jax.lax.cond(
                 jnp.mod(t, 2) == 0,
                 lambda: jax.tree.map(lambda g, pg: g * 0.5 + pg * 0.5, grads, state.prev_grads),
@@ -243,9 +244,8 @@ def main():
                 )
 
             def heuns_update():
-                # we freeze the conditioning, and overall ignore all params
-                # the momentum is updated since the current grad is stored there
-                updates = jax.tree.map(compute_update, new_m, state.v, params)
+                v_with_unscaled_grad = jax.tree.map(update_velocity, state.v, unscaled_grads)
+                updates = jax.tree.map(compute_update, new_m, v_with_unscaled_grad, params)
                 # heuns update, we don't update any opt state here, only the update store
                 return updates, AdamWState(
                     m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=updates
