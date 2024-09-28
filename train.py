@@ -247,13 +247,12 @@ def main():
 
             def heuns_update():
                 # heuns update, we don't update any opt state here, only the update store
-                # rescale it by 2/3, for ralston
                 ralston_updates = jax.tree.map(lambda x: x, updates)
                 return ralston_updates, AdamWState(
                     m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=ralston_updates
                 )
 
-            return jax.lax.cond(jnp.mod(t, 2) == 0, application_update, heuns_update)
+            return updates, new_state
 
     optim = AdamW(
         lr_config=train_config.lr_config,
