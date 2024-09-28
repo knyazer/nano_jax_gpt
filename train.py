@@ -247,7 +247,7 @@ def main():
                 # updates are just the new updates - old_updates
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
                 return mod_updates, AdamWState(
-                    m=new_m, v=new_v, t=t, prev_grads=grads, prev_upd=updates
+                    m=new_m, v=new_v, t=t, prev_grads=unscaled_grads, prev_upd=updates
                 )
 
             def heuns_update():
