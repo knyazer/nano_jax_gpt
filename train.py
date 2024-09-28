@@ -249,7 +249,7 @@ def main():
                 # heuns update, we don't update any opt state here, only the update store
                 # rescale it by 2/3, for ralston
                 ralston_updates = jax.tree.map(lambda x: x * 2 / 3, updates)
-                return updates, AdamWState(
+                return ralston_updates, AdamWState(
                     m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=ralston_updates
                 )
 
