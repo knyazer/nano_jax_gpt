@@ -133,6 +133,15 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
     return eval_loss
 
 
+def clip(x, norm):
+    global_l2_norm = jnp.sqrt(sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), x))))
+    return jax.lax.cond(
+        global_l2_norm > norm,
+        lambda: jax.tree.map(lambda g: g * (norm / (global_l2_norm + 1e-6)), x),
+        lambda: x,
+    )
+
+
 def main():
     model = GPT.make(jr.key(0), model_config)
     model_params = eqx.filter(model, eqx.is_array)
@@ -191,19 +200,9 @@ def main():
             return lr
 
         def update(self, grads, state, params):
-            global_l2_norm = jnp.sqrt(
-                sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), grads)))
-            )
-            grads = jax.lax.cond(
-                global_l2_norm > self.global_norm,
-                lambda: jax.tree.map(
-                    lambda g: g * (self.global_norm / (global_l2_norm + 1e-6)), grads
-                ),
-                lambda: grads,
-            )
-
             t = state.t + 1
             lr = self.warmup_cosine_decay(t)
+            grads = clip(grads, self.global_norm)
 
             def update_moment(m, g):
                 return self.beta1 * m + (1.0 - self.beta1) * g
@@ -222,18 +221,18 @@ def main():
             # steps!
 
             def step1():
+                t_grads = grads
                 # just do a single step with grads
-                t_grads = jax.tree.map(lambda g: g * 1 / 3, grads)
                 new_m = jax.tree.map(update_moment, state.m, t_grads)
                 new_v = jax.tree.map(update_velocity, state.v, t_grads)
                 updates = jax.tree.map(compute_update, new_m, new_v, params)
 
                 return updates, AdamWState(
-                    state.m, state.v, t, stage1=grads, stage2=t_grads, prev_upd=updates
+                    state.m, state.v, t, stage1=grads, stage2=grads, prev_upd=updates
                 )  # pass the grads
 
             def step2():
-                t_grads = jax.tree.map(lambda g: g * 2 / 3, grads)
+                t_grads = jax.tree.map(lambda g, s1: g * 0.5 + s1 * 0.5, grads, state.stage1)
 
                 new_m = jax.tree.map(update_moment, state.m, t_grads)
                 new_v = jax.tree.map(update_velocity, state.v, t_grads)
@@ -242,11 +241,14 @@ def main():
                 updates = jax.tree.map(lambda u, pu: u - pu, updates, state.prev_upd)
                 return updates, AdamWState(
                     state.m, state.v, t, stage1=state.stage1, stage2=grads, prev_upd=updates
-                )  # unfreeze
+                )
 
             def step3():
                 avg_grads = jax.tree.map(
-                    lambda g, s1, s2: 0.75 * g + 0.25 * s1, grads, state.stage1, state.stage2
+                    lambda g, s1, s2: 0.5 * s1 + 0.5 * (g * 0.5 + s2 * 0.5),
+                    grads,
+                    state.stage1,
+                    state.stage2,
                 )
 
                 new_m = jax.tree.map(update_moment, state.m, avg_grads)
@@ -256,7 +258,7 @@ def main():
                 updates = jax.tree.map(lambda u, pu: u - pu, updates, state.prev_upd)
                 return updates, AdamWState(
                     new_m, new_v, t, stage1=avg_grads, stage2=avg_grads, prev_upd=updates
-                )  # unfreeze
+                )
 
             return jax.lax.switch(jnp.mod(t, 3), [step1, step2, step3])
 
