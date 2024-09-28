@@ -244,7 +244,8 @@ def main():
                 )
 
             def heuns_update():
-                updates = jax.tree.map(compute_update, new_m, new_v, params)
+                v_with_unscaled_grad = jax.tree.map(update_velocity, state.v, unscaled_grads)
+                updates = jax.tree.map(compute_update, new_m, v_with_unscaled_grad, params)
                 # heuns update, we don't update any opt state here, only the update store
                 return updates, AdamWState(
                     m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=updates
