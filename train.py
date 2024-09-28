@@ -216,7 +216,11 @@ def main():
             unscaled_grads = grads
             grads = jax.lax.cond(
                 jnp.mod(t, 2) == 0,
-                lambda: jax.tree.map(lambda g, pg: g * 0.5 + pg * 0.5, grads, state.prev_grads),
+                lambda: jax.tree.map(
+                    lambda g, pg: clip(g, self.global_norm) * 0.5 + pg * 0.5,
+                    grads,
+                    state.prev_grads,
+                ),
                 lambda: jax.tree.map(lambda g: clip(g * 3, self.global_norm), grads),
             )
 
