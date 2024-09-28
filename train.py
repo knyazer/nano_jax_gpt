@@ -214,6 +214,7 @@ def main():
             lr = self.warmup_cosine_decay(t)
             k = jnp.clip(t / 500.0 + 1.0, 1.0, 1.0 / (1.0 - self.beta1))
 
+            unscaled_grads = grads
             grads = jax.lax.cond(
                 jnp.mod(t, 2) == 0,
                 lambda: jax.tree.map(lambda g, pg: g * 0.5 + pg * 0.5, grads, state.prev_grads),
@@ -236,10 +237,10 @@ def main():
                 return update
 
             new_m = jax.tree.map(update_moment, state.m, grads)
-            new_v = jax.tree.map(update_velocity, state.v, grads)
-            updates = jax.tree.map(compute_update, new_m, new_v, params)
 
             def application_update():
+                new_v = jax.tree.map(update_velocity, state.v, grads)
+                updates = jax.tree.map(compute_update, new_m, new_v, params)
                 # updates are just the new updates - old_updates
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
                 return mod_updates, AdamWState(
@@ -248,6 +249,8 @@ def main():
 
             def heuns_update():
                 # heuns update, we don't update any opt state here, only the update store
+                new_v = jax.tree.map(update_velocity, state.v, unscaled_grads)
+                updates = jax.tree.map(compute_update, new_m, new_v, params)
                 return updates, AdamWState(
                     m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=updates
                 )
