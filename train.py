@@ -212,8 +212,8 @@ def main():
 
             grads = jax.lax.cond(
                 jnp.mod(t, 2) == 0,
-                lambda: jax.tree.map(lambda g, pg: g * 0.75 + pg * 0.25, grads, state.prev_grads),
-                lambda: jax.tree.map(lambda g: g * 2 / 3, grads),
+                lambda: jax.tree.map(lambda g: g, grads),
+                lambda: jax.tree.map(lambda g: g, grads),
             )
 
             def update_moment(m, g):
@@ -239,13 +239,18 @@ def main():
 
             def application_update():
                 # updates are just the new updates - old_updates
-                mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
+                # updates are -old + 0.25 * old + 0.75 * new
+                mod_updates = jax.tree.map(
+                    lambda x, y: -x + 0.25 * x + 0.75 * y, state.prev_upd, updates
+                )
                 return mod_updates, new_state
 
             def heuns_update():
                 # heuns update, we don't update any opt state here, only the update store
+                # rescale it by 2/3, for ralston
+                ralston_updates = jax.tree.map(lambda x: x * 2 / 3, updates)
                 return updates, AdamWState(
-                    m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=updates
+                    m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=ralston_updates
                 )
 
             return jax.lax.cond(jnp.mod(t, 2) == 0, application_update, heuns_update)
