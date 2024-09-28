@@ -55,7 +55,7 @@ class TrainConfig(eqx.Module):
             case "gpt2":
                 return TrainConfig(
                     batch_size=256,  # gpt2 paper - 512
-                    n_grad_accumulation=1,
+                    n_grad_accumulation=2,
                     train_for=600_000,
                     weight_decay=1e-1,
                     lr_config={
