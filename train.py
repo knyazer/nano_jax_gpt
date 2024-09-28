@@ -191,17 +191,20 @@ def main():
             return lr
 
         def update(self, grads, state, params):
-            global_l2_norm = jnp.sqrt(
-                sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), grads)))
-            )
-            grads = jax.tree.map(
-                lambda g: jax.lax.cond(
-                    global_l2_norm > self.global_norm,
-                    lambda: g * self.global_norm / (global_l2_norm + 1e-6),
-                    lambda: g,
-                ),
-                grads,
-            )
+            def clip(x, norm):
+                global_l2_norm = jnp.sqrt(
+                    sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), x)))
+                )
+                return jax.tree.map(
+                    lambda g: jax.lax.cond(
+                        global_l2_norm > norm,
+                        lambda: g * norm / (global_l2_norm + 1e-6),
+                        lambda: g,
+                    ),
+                    x,
+                )
+
+            grads = clip(grads, self.global_norm)
 
             # grads also differs; grads if its an intermediate step, grads is just grads
             # otherwise it is -prev_grads * 0.5 + grads
@@ -209,13 +212,12 @@ def main():
 
             t = state.t + 1
             lr = self.warmup_cosine_decay(t)
-            k = jnp.clip(t / 1000.0, 1.0, 1.0 / (1.0 - self.beta1))
+            k = jnp.clip(t / 500.0 + 1.0, 1.0, 1.0 / (1.0 - self.beta1))
 
-            unscaled_grads = grads
             grads = jax.lax.cond(
                 jnp.mod(t, 2) == 0,
                 lambda: jax.tree.map(lambda g, pg: g * 0.5 + pg * 0.5, grads, state.prev_grads),
-                lambda: jax.tree.map(lambda g: k * g, grads),
+                lambda: jax.tree.map(lambda g: clip(k * g, self.global_norm), grads),
             )
 
             def update_moment(m, g):
@@ -225,7 +227,7 @@ def main():
                 return self.beta2 * v + (1.0 - self.beta2) * (g**2)
 
             def compute_update(m, v, p):
-                m_hat = m / (1.0 - self.beta1**t)
+                m_hat = m / (1.0 - self.beta1 ** (t / 2))
                 v_hat = v / (1.0 - self.beta2 ** (t / 2))
                 # we assume conditioning does not change much - or fixed
                 update = -lr * m_hat / (jnp.sqrt(v_hat) + self.epsilon)
@@ -235,9 +237,9 @@ def main():
 
             new_m = jax.tree.map(update_moment, state.m, grads)
             new_v = jax.tree.map(update_velocity, state.v, grads)
+            updates = jax.tree.map(compute_update, new_m, new_v, params)
 
             def application_update():
-                updates = jax.tree.map(compute_update, new_m, new_v, params)
                 # updates are just the new updates - old_updates
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
                 return mod_updates, AdamWState(
@@ -245,8 +247,6 @@ def main():
                 )
 
             def heuns_update():
-                v_with_unscaled_grad = jax.tree.map(update_velocity, state.v, unscaled_grads)
-                updates = jax.tree.map(compute_update, new_m, v_with_unscaled_grad, params)
                 # heuns update, we don't update any opt state here, only the update store
                 return updates, AdamWState(
                     m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=updates
