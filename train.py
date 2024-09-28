@@ -213,7 +213,7 @@ def main():
             grads = jax.lax.cond(
                 jnp.mod(t, 2) == 0,
                 lambda: jax.tree.map(lambda g, pg: g * 0.5 + pg * 0.5, grads, state.prev_grads),
-                lambda: jax.tree.map(lambda g: g * 1.5, grads),
+                lambda: jax.tree.map(lambda g: g, grads),
             )
 
             def update_moment(m, g):
@@ -225,25 +225,34 @@ def main():
             new_m = jax.tree.map(update_moment, state.m, grads)
             new_v = jax.tree.map(update_velocity, state.v, grads)
 
-            def compute_update(m, v, p):
+            def compute_update(m, v, p, *, use_full=False):
                 m_hat = m / (1.0 - self.beta1**t)
                 v_hat = v / (1.0 - self.beta2**t)
-                update = -lr * m_hat / (jnp.sqrt(v_hat) + self.epsilon)
+                m_full = m_hat / (1 - self.beta1)  # specifies endpoint of momentum
+                # we assume conditioning does not change much - or fixed
+                if use_full:
+                    update = -lr * m_full / (jnp.sqrt(v_hat) + self.epsilon)
+                else:
+                    update = -lr * m_hat / (jnp.sqrt(v_hat) + self.epsilon)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
                     update -= lr * self.weight_decay * p
                 return update
 
-            updates = jax.tree.map(compute_update, new_m, new_v, params)
-
-            new_state = AdamWState(m=new_m, v=new_v, t=t, prev_grads=grads, prev_upd=updates)
-
             def application_update():
+                updates = jax.tree.map(
+                    eqx.Partial(compute_update, use_full=False), new_m, new_v, params
+                )
                 # updates are just the new updates - old_updates
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
-                return mod_updates, new_state
+                return mod_updates, AdamWState(
+                    m=new_m, v=new_v, t=t, prev_grads=grads, prev_upd=updates
+                )
 
             def heuns_update():
                 # heuns update, we don't update any opt state here, only the update store
+                updates = jax.tree.map(
+                    eqx.Partial(compute_update, use_full=True), new_m, new_v, params
+                )
                 return updates, AdamWState(
                     m=state.m, v=state.v, t=t, prev_grads=grads, prev_upd=updates
                 )
