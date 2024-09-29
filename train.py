@@ -212,9 +212,10 @@ def main():  # noqa
             def l2(x):
                 return jnp.sqrt(sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), x))))
 
-            def l1(x):
-                return sum(jax.tree_leaves(jax.tree_map(lambda g: jnp.sum(jnp.abs(g)), x))) / sum(
-                    jax.tree_leaves(jax.tree_map(lambda g: g.size, x))
+            def corr(a, b):
+                prod = jax.tree_map(lambda x, y: x * y, a, b)
+                return sum(jax.tree_leaves(jax.tree_map(lambda x: jnp.sum(x), prod))) / (
+                    l2(a) * l2(b)
                 )
 
             def clip(x, norm):
@@ -280,17 +281,11 @@ def main():  # noqa
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
 
                 err = l2(jax.tree.map(lambda g, pg: g - pg, grads, state.prev_grads))
-                err_rel = l1(
-                    jax.tree.map(
-                        lambda g, pg: jnp.abs(g - pg) / (jnp.abs(pg) + jnp.abs(g) + 1e-6),
-                        grads,
-                        state.prev_grads,
-                    )
-                )
+                err_rel = corr(grads, state.prev_grads)  # 1 is linear fn, 0 is noise, -1 opposite
                 jax_log(
                     {
                         "solver_error": err,
-                        "relative_solver_error": err_rel,
+                        "solver_error_correlation": err_rel,
                         "random_p_grad_1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
                         "random_p_grad_2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
                     },
@@ -375,8 +370,7 @@ def main():  # noqa
 
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
         model, opt_state, loss = step_fn(model, optim, opt_state, X, y, fwd_key)
-        if i % 2 == 1:
-            X, y = load_train_batches()
+        X, y = load_train_batches()
         loss_var = jnp.log(loss.std() + 1e-13)
         loss = float(loss.mean())
 
