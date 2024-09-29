@@ -45,7 +45,7 @@ model_config: GPTConfig = GPTConfig.from_preset(args.model)
 train_config: TrainConfig = TrainConfig.from_preset(args.model)
 run_config: RunConfig = RunConfig.from_preset(args.model)
 
-jax.config.update("jax_compile_log", True)  # noqa
+jax.log_compiles(True)
 
 
 def jax_log(data, t, cond):
