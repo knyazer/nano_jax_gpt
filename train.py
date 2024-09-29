@@ -154,14 +154,16 @@ def main():
         beta1: float = eqx.field(static=True)
         beta2: float = eqx.field(static=True)
         epsilon: float = eqx.field(static=True)
+        start_t: int = eqx.field(static=True)
 
-        def __init__(self, lr_config, weight_decay, global_norm):
+        def __init__(self, lr_config, weight_decay, global_norm, t=0):
             self.lr_config = lr_config
             self.weight_decay = weight_decay
             self.global_norm = global_norm
             self.beta1 = 0.9
             self.beta2 = 0.999
             self.epsilon = 1e-8
+            self.start_t = t
 
         def init(self, params, t=0):
             return AdamWState(
@@ -180,7 +182,7 @@ def main():
             end_value = self.lr_config["end_value"]
 
             def warmup(t):
-                return init_value + (peak_value - init_value) * (t / warmup_steps)
+                return init_value + (peak_value - init_value) * ((t - self.start_t) / warmup_steps)
 
             def decay(t):
                 t = t - warmup_steps
@@ -188,7 +190,7 @@ def main():
                 cosine_decay = 0.5 * (1.0 + jnp.cos(jnp.pi * t / total_decay_steps))
                 return end_value + (peak_value - end_value) * cosine_decay
 
-            lr = jax.lax.cond(t < warmup_steps, warmup, decay, t)
+            lr = jax.lax.cond(t < warmup_steps + self.start_t, warmup, decay, t)
             return lr
 
         def update(self, grads, state, params):
@@ -205,7 +207,7 @@ def main():
                     x,
                 )
 
-            grads = clip(grads, self.global_norm)
+            grads = clip(grads, self.global_norm * 2)
 
             # grads also differs; grads if its an intermediate step, grads is just grads
             # otherwise it is -prev_grads * 0.5 + grads
@@ -222,7 +224,7 @@ def main():
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: g * 2, grads),
+                lambda: jax.tree.map(lambda g: clip(g * 2, self.global_norm * 2), grads),
             )
 
             def update_moment(m, g):
@@ -265,6 +267,7 @@ def main():
         lr_config=train_config.lr_config,
         weight_decay=train_config.weight_decay,
         global_norm=train_config.global_norm,
+        t=starting_index,
     )
 
     n_model_params = jax.tree.map(lambda x: x.size, model_params)
