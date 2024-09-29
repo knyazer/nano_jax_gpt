@@ -273,7 +273,9 @@ def main():
                     if int(t) % 2 == 0:
                         wandb.log({"solver_error": l2(data)}, commit=False)
 
-                jax.debug.callback(clb, mod_updates, t)
+                jax.debug.callback(
+                    clb, jax.tree.map(lambda g, pg: g - pg, unscaled_grads, state.prev_grads), t
+                )
 
                 return mod_updates, AdamWState(
                     m=new_m, v=new_v, t=t, prev_grads=unscaled_grads, prev_upd=updates
