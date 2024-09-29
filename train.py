@@ -221,7 +221,7 @@ def main():
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: clip(g * 3, self.global_norm * 2), grads),
+                lambda: jax.tree.map(lambda g: clip(g * 2, self.global_norm * 2), grads),
             )
 
             def update_moment(m, g):
