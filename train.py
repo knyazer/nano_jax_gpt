@@ -137,6 +137,8 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
 
 def main():
     model = GPT.make(jr.key(0), model_config)
+    model = eqx.tree_deserialise_leaves("checkpoint.eqx", model)
+    starting_index = 24_000
     model_params = eqx.filter(model, eqx.is_array)
 
     class AdamWState(eqx.Module):
@@ -162,11 +164,11 @@ def main():
             self.beta2 = 0.999
             self.epsilon = 1e-8
 
-        def init(self, params):
+        def init(self, params, t=0):
             return AdamWState(
                 m=jax.tree.map(jnp.zeros_like, params),
                 v=jax.tree.map(jnp.zeros_like, params),
-                t=jnp.array(0, dtype=jnp.int32),
+                t=jnp.array(t, dtype=jnp.int32),
                 prev_grads=jax.tree.map(jnp.zeros_like, params),
                 prev_upd=jax.tree.map(jnp.zeros_like, params),
             )
@@ -270,7 +272,7 @@ def main():
     n_model_params = sum(jax.tree.leaves(n_model_params))
 
     print(f"Model has {n_model_params/1_000_000:.2f}M parameters")
-    opt_state = optim.init(model_params)
+    opt_state = optim.init(model_params, t=starting_index)
     eval_loss = float(jnp.nan)
 
     devices = mesh_utils.create_device_mesh((1, jax.device_count(), 1))
@@ -297,8 +299,26 @@ def main():
             ),
         )
 
+    def skip_train_batches(n):
+        for _ in range(n):
+            train_generator.integers(
+                low=0,
+                high=1000,
+                size=(
+                    int(
+                        np.prod(
+                            (
+                                train_config.n_grad_accumulation,
+                                train_config.batch_size,
+                            )
+                        )
+                    ),
+                ),
+            )
+
+    skip_train_batches(starting_index)
     X, y = load_train_batches()
-    for i in (pbar := tqdm(range(train_config.train_for))):
+    for i in (pbar := tqdm(range(starting_index, train_config.train_for))):
         data_key, fwd_key = jr.split(jr.key(i))
 
         t = time.time()
@@ -306,12 +326,17 @@ def main():
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
         model, opt_state, loss = step_fn(model, optim, opt_state, X, y, fwd_key)
         X, y = load_train_batches()
+        loss_var = float(loss.var())
         loss = float(loss.mean())
 
         pbar.set_description(
             f"loss:{loss:.2f} / eval:{eval_loss:.2f} | step:{(time.time() - t)*1e3:.2f}ms"
         )
-        wandb.log({"loss": loss})
+        wandb.log({"step": i, "loss": loss, "loss_var": loss_var})
+
+        # since our method is multi-step, we are interested only in the even steps
+        if (i - starting_index) % 2 == 0:
+            wandb.log({"clean_loss": loss, "clean_var": loss_var})
 
         chckp_freq = train_config.train_for // run_config.times_to_checkpoint
         if i % chckp_freq == chckp_freq - 1:
