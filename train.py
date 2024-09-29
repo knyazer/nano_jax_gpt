@@ -223,7 +223,7 @@ def main():
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: g * 2, grads),
+                lambda: jax.tree.map(lambda g: g * 5, grads),
             )
 
             def test_wandb_log(grad_norm, grad_scaled_norm, step):
