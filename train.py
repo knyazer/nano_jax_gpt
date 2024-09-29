@@ -312,9 +312,7 @@ def main():  # noqa
             def heuns_update():
                 # heuns update, we don't update any opt state here, only the update store
                 new_v = jax.tree.map(update_velocity, state.v, unscaled_grads)
-                v_norm = l2(new_v)
-                v_normed = jax.tree.map(lambda x: x / v_norm, new_v)
-                updates = jax.tree.map(compute_update, new_m, v_normed, params)
+                updates = jax.tree.map(compute_update, new_m, new_v, params)
                 return updates, AdamWState(
                     m=state.m,
                     v=state.v,
