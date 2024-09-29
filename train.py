@@ -243,7 +243,7 @@ def main():  # noqa
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: g * 1.0, clip(grads, self.global_norm)),
+                lambda: jax.tree.map(lambda g: g * 2.0, clip(grads, self.global_norm)),
             )
 
             jax_log(
@@ -291,6 +291,8 @@ def main():  # noqa
                     {
                         "solver_error": err,
                         "relative_solver_error": err_rel,
+                        "random_p_grad_1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
+                        "random_p_grad_2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
                     },
                     jnp.mod(t, 2) == 0,
                 )
