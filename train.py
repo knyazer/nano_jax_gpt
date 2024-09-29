@@ -215,8 +215,8 @@ def main():  # noqa
                 return jnp.sqrt(sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), x))))
 
             def corr(a, b):
-                prod = jax.tree_map(lambda x, y: x * y, a, b)
-                return sum(jax.tree_leaves(jax.tree_map(lambda x: jnp.sum(x), prod))) / (
+                prod = jax.tree.map(lambda x, y: x * y, a, b)
+                return sum(jax.tree_leaves(jax.tree.map(lambda x: jnp.sum(x), prod))) / (
                     l2(a) * l2(b)
                 )
 
@@ -300,9 +300,9 @@ def main():  # noqa
                 # if correlation is more than 0.8, we increase the learning rate by 5%,
                 # otherwise decrease it by 5%
                 new_lr = jax.lax.cond(
-                    err_rel > 0.8,
-                    lambda: state.lr * 1.05,
-                    lambda: state.lr * 0.95,
+                    err_rel > 0.2,
+                    lambda: state.lr * 1.02,
+                    lambda: state.lr * 0.98,
                 )
 
                 return mod_updates, AdamWState(
