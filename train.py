@@ -245,7 +245,7 @@ def main():  # noqa
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: g * 9.0, clip(grads, self.global_norm)),
+                lambda: jax.tree.map(lambda g: g * 2.0, clip(grads, self.global_norm)),
             )
 
             jax_log(
@@ -269,7 +269,7 @@ def main():  # noqa
             def compute_update(m, v, p):
                 m_hat = m / (1.0 - self.beta1 ** ((t - self.start_t) / 2))
                 # we assume conditioning does not change much - or fixed
-                update = -lr * m_hat / (jnp.sqrt(v) + self.epsilon)
+                update = -lr * m_hat * 10 / (jnp.sqrt(v) + self.epsilon)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
                     update -= lr * self.weight_decay * p
                 return update
@@ -292,7 +292,6 @@ def main():  # noqa
                         "solver_error_correlation": err_rel,
                         "random_p_grad_1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
                         "random_p_grad_2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
-                        "lr": lr,
                     },
                     jnp.mod(t, 2) == 0,
                 )
