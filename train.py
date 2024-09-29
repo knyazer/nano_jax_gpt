@@ -45,8 +45,16 @@ model_config: GPTConfig = GPTConfig.from_preset(args.model)
 train_config: TrainConfig = TrainConfig.from_preset(args.model)
 run_config: RunConfig = RunConfig.from_preset(args.model)
 
+jax.config.update("jax_compile_log", True)  # noqa
+
+
+def jax_log(data, t, cond):
+    if cond(int(t)):
+        wandb.log(data, commit=False)
+
+
 if train_config.dataset_name == "shakespear-char":
-    from prepare_shakespear import decode
+    from prepare_shakespear import decode  # type: ignore
 elif train_config.dataset_name == "openwebtext":
     import tiktoken
 
@@ -137,7 +145,7 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
     return eval_loss
 
 
-def main():
+def main():  # noqa
     model = GPT.make(jr.key(0), model_config)
     if args.resume:
         model = eqx.tree_deserialise_leaves("checkpoint.eqx", model)
@@ -232,19 +240,17 @@ def main():
                 lambda: jax.tree.map(lambda g: g * 2, grads),
             )
 
-            def test_wandb_log(grad_norm, grad_scaled_norm, step):
-                if int(step) % 2 == 1:
-                    wandb.log(
-                        {"raw_grad_norm_s1": grad_norm, "grad_scaled_norm_s1": grad_scaled_norm},
-                        commit=False,
-                    )
-                else:
-                    wandb.log(
-                        {"raw_grad_norm_s2": grad_norm, "grad_scaled_norm_s2": grad_scaled_norm},
-                        commit=False,
-                    )
+            jax_log(
+                {"raw_grad_norm_s1": l2(grads), "grad_scaled_norm_s1": l2(unscaled_grads)},
+                t,
+                lambda t: t % 2 == 1,
+            )
 
-            jax.debug.callback(test_wandb_log, l2(unscaled_grads), l2(grads), t)
+            jax_log(
+                {"raw_grad_norm_s2": l2(grads), "grad_scaled_norm_s2": l2(unscaled_grads)},
+                t,
+                lambda t: t % 2 == 0,
+            )
 
             def update_moment(m, g):
                 return self.beta1 * m + (1.0 - self.beta1) * g
@@ -269,12 +275,10 @@ def main():
                 # updates are just the new updates - old_updates
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
 
-                def clb(data, t):
-                    if int(t) % 2 == 0:
-                        wandb.log({"solver_error": l2(data)}, commit=False)
-
-                jax.debug.callback(
-                    clb, jax.tree.map(lambda g, pg: g - pg, grads, state.prev_grads), t
+                jax_log(
+                    jax.tree.map(lambda g, pg: g - pg, grads, state.prev_grads),
+                    t,
+                    lambda t: t % 2 == 0,
                 )
 
                 return mod_updates, AdamWState(
