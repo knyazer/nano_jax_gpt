@@ -354,7 +354,7 @@ def main():
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
         model, opt_state, loss = step_fn(model, optim, opt_state, X, y, fwd_key)
         X, y = load_train_batches()
-        loss_var = float(jnp.log(loss.var() + 1e-8))
+        loss_var = jnp.log(jnp.sqrt(loss.var()) + 1e-13)
         loss = float(loss.mean())
 
         pbar.set_description(
