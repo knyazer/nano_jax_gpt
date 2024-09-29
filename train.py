@@ -274,11 +274,11 @@ def main():  # noqa
                 # updates are just the new updates - old_updates
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
 
+                err = l2(jax.tree.map(lambda g, pg: g - pg, grads, state.prev_grads))
                 jax_log(
                     {
-                        "solver_error": l2(
-                            jax.tree.map(lambda g, pg: g - pg, grads, state.prev_grads)
-                        )
+                        "solver_error": err,
+                        "relative_solver_error": err / (l2(grads) + 1e-6),
                     },
                     jnp.mod(t, 2) == 0,
                 )
