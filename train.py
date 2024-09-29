@@ -50,7 +50,7 @@ jax.log_compiles(True)
 
 def jax_log(data, cond):
     with jax.ensure_compile_time_eval():
-        if cond:
+        if cond == True:
             wandb.log(data, commit=False)
 
 
