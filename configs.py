@@ -61,7 +61,7 @@ class TrainConfig(eqx.Module):
                     lr_config={
                         "init_value": 3e-5,
                         "peak_value": 6e-4,
-                        "warmup_steps": 1000,
+                        "warmup_steps": 200,
                         "decay_steps": 600_000,
                         "end_value": 6e-5,  # chinchilla laws
                     },

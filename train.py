@@ -207,7 +207,13 @@ def main():
                     x,
                 )
 
-            grads = clip(grads, self.global_norm * 2)
+            def test_wandb_log(l2_grad_norm):
+                wandb.log({"grad_norm": l2_grad_norm})
+
+            l2_grad_norm = jnp.sqrt(
+                sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), grads)))
+            )
+            jax.debug.callback(test_wandb_log, l2_grad_norm)
 
             # grads also differs; grads if its an intermediate step, grads is just grads
             # otherwise it is -prev_grads * 0.5 + grads
@@ -224,7 +230,7 @@ def main():
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: clip(g * 2, self.global_norm * 2), grads),
+                lambda: jax.tree.map(lambda g: g * 2, grads),
             )
 
             def update_moment(m, g):
