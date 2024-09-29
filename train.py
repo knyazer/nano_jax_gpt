@@ -291,7 +291,6 @@ def main():  # noqa
                         "solver_error_correlation": err_rel,
                         "random_p_grad_1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
                         "random_p_grad_2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
-                        "lr": state.lr,
                     },
                     jnp.mod(t, 2) == 0,
                 )
