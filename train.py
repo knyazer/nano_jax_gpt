@@ -295,10 +295,10 @@ def main():  # noqa
                     jnp.mod(t, 2) == 0,
                 )
 
-                # if correlation lower than 0.8, we increase the learning rate by 5%,
+                # if correlation is more than 0.8, we increase the learning rate by 5%,
                 # otherwise decrease it by 5%
                 new_lr = jax.lax.cond(
-                    err_rel < 0.8,
+                    err_rel > 0.8,
                     lambda: state.lr * 1.05,
                     lambda: state.lr * 0.95,
                 )
