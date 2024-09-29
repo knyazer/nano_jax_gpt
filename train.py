@@ -103,7 +103,7 @@ def step_fn(model, optim, opt_state, X, y, key):
     updates, opt_state = optim.update(grads, opt_state, model)
     model = eqx.apply_updates(model, updates)
 
-    return model, opt_state, loss
+    return model, opt_state, loss.astype(jnp.float32)
 
 
 evals_table = []
@@ -328,7 +328,7 @@ def main():
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
         model, opt_state, loss = step_fn(model, optim, opt_state, X, y, fwd_key)
         X, y = load_train_batches()
-        loss_var = float(loss.var())
+        loss_var = float(jnp.log(loss.var() + 1e-8))
         loss = float(loss.mean())
 
         pbar.set_description(
