@@ -21,7 +21,7 @@ class GPTConfig(eqx.Module):
                 return GPTConfig(
                     context_len=256,
                     vocab_size=50257,
-                    n_embed=512,
+                    n_embed=384,
                     n_layers=6,
                     n_heads=6,
                     dropout=0.0,
