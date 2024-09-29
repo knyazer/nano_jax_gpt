@@ -204,7 +204,7 @@ def main():
                     x,
                 )
 
-            grads = clip(grads, self.global_norm)
+            grads = clip(grads, self.global_norm * 2)
 
             # grads also differs; grads if its an intermediate step, grads is just grads
             # otherwise it is -prev_grads * 0.5 + grads
@@ -217,11 +217,11 @@ def main():
             grads = jax.lax.cond(
                 jnp.mod(t, 2) == 0,
                 lambda: jax.tree.map(
-                    lambda g, pg: clip(g, self.global_norm) * 0.5 + pg * 0.5,
+                    lambda g, pg: clip(g * 0.5 + pg * 0.5, self.global_norm),
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: clip(g * 3, self.global_norm), grads),
+                lambda: jax.tree.map(lambda g: clip(g * 3, self.global_norm * 2), grads),
             )
 
             def update_moment(m, g):
