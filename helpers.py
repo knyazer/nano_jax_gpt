@@ -23,5 +23,6 @@ class WandbLogger:
                     settings=wandb.Settings(code_dir="."),
                     **self._kws,
                 )
+                wandb.run.log_code(".")
 
             wandb.log(*args, **kwargs)

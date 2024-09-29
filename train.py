@@ -268,6 +268,13 @@ def main():
                 updates = jax.tree.map(compute_update, new_m, new_v, params)
                 # updates are just the new updates - old_updates
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
+
+                def clb(data, t):
+                    if int(t) % 2 == 0:
+                        wandb.log({"solver_error": l2(data)}, commit=False)
+
+                jax.debug.callback(clb, mod_updates, t)
+
                 return mod_updates, AdamWState(
                     m=new_m, v=new_v, t=t, prev_grads=unscaled_grads, prev_upd=updates
                 )
