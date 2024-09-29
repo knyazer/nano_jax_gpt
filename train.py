@@ -213,7 +213,7 @@ def main():
             t = state.t + 1
             lr = self.warmup_cosine_decay(t)
 
-            k = jnp.clip(t / 2000.0, 1.0, 1.0 / (1 - self.beta1))
+            k = jnp.clip(t / 2000.0, 0.0, 1 / (1 - self.beta1))
 
             unscaled_grads = grads
             grads = jax.lax.cond(
