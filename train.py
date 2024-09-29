@@ -282,7 +282,7 @@ def main():  # noqa
                 err = l2(jax.tree.map(lambda g, pg: g - pg, grads, state.prev_grads))
                 err_rel = l1(
                     jax.tree.map(
-                        lambda g, pg: jnp.abs(g - pg) / (jnp.abs(pg) + jnp.abs(g)),
+                        lambda g, pg: jnp.abs(g - pg) / (jnp.abs(pg) + jnp.abs(g) + 1e-6),
                         grads,
                         state.prev_grads,
                     )
