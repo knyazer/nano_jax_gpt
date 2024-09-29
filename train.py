@@ -161,7 +161,6 @@ def main():  # noqa
         t: Any
         prev_grads: Any
         prev_upd: Any
-        lr: Any
 
     class AdamW(eqx.Module):
         lr_config: dict = eqx.field(static=True)
@@ -188,7 +187,6 @@ def main():  # noqa
                 t=jnp.array(t, dtype=jnp.int32),
                 prev_grads=jax.tree.map(jnp.zeros_like, params),
                 prev_upd=jax.tree.map(jnp.zeros_like, params),
-                lr=self.lr_config["peak_value"],
             )
 
         def warmup_cosine_decay(self, t):
@@ -236,6 +234,7 @@ def main():  # noqa
             # and update is just -old_update + new_update
 
             t = state.t + 1
+            lr = self.warmup_cosine_decay(t)
 
             unscaled_grads = grads
             grads = jax.lax.cond(
@@ -263,8 +262,6 @@ def main():  # noqa
 
             def update_velocity(v, g):
                 return self.beta2 * v + (1.0 - self.beta2) * (g**2)
-
-            lr = state.lr
 
             def compute_update(m, v, p):
                 m_hat = m / (1.0 - self.beta1 ** ((t - self.start_t) / 2))
@@ -295,16 +292,8 @@ def main():  # noqa
                     jnp.mod(t, 2) == 0,
                 )
 
-                # if correlation lower than 0.8, we increase the learning rate by 5%,
-                # otherwise decrease it by 5%
-                new_lr = jax.lax.cond(
-                    err_rel < 0.8,
-                    lambda: state.lr * 1.05,
-                    lambda: state.lr * 0.95,
-                )
-
                 return mod_updates, AdamWState(
-                    m=new_m, v=new_v, t=t, prev_grads=unscaled_grads, prev_upd=updates, lr=new_lr
+                    m=new_m, v=new_v, t=t, prev_grads=unscaled_grads, prev_upd=updates
                 )
 
             def heuns_update():
@@ -312,12 +301,7 @@ def main():  # noqa
                 new_v = jax.tree.map(update_velocity, state.v, unscaled_grads)
                 updates = jax.tree.map(compute_update, new_m, new_v, params)
                 return updates, AdamWState(
-                    m=state.m,
-                    v=state.v,
-                    t=t,
-                    prev_grads=unscaled_grads,
-                    prev_upd=updates,
-                    lr=state.lr,
+                    m=state.m, v=state.v, t=t, prev_grads=unscaled_grads, prev_upd=updates
                 )
 
             return jax.lax.cond(jnp.mod(t, 2) == 0, application_update, heuns_update)
