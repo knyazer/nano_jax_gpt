@@ -245,7 +245,7 @@ def main():  # noqa
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: g * 2.0, clip(grads, self.global_norm)),
+                lambda: jax.tree.map(lambda g: g * 9.0, clip(grads, self.global_norm)),
             )
 
             jax_log(
@@ -268,8 +268,9 @@ def main():  # noqa
 
             def compute_update(m, v, p):
                 m_hat = m / (1.0 - self.beta1 ** ((t - self.start_t) / 2))
+                v_hat = v / (1.0 - self.beta2 ** ((t - self.start_t) / 2))
                 # we assume conditioning does not change much - or fixed
-                update = -lr * m_hat / (jnp.sqrt(v) + self.epsilon)
+                update = -lr * m_hat * 10.0
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
                     update -= lr * self.weight_decay * p
                 return update
@@ -278,9 +279,7 @@ def main():  # noqa
 
             def application_update():
                 new_v = jax.tree.map(update_velocity, state.v, grads)
-                v_norm = l2(new_v)
-                v_normed = jax.tree.map(lambda x: x / v_norm, new_v)
-                updates = jax.tree.map(compute_update, new_m, v_normed, params)
+                updates = jax.tree.map(compute_update, new_m, new_v, params)
                 # updates are just the new updates - old_updates
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
 
