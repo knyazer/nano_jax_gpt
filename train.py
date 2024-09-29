@@ -36,6 +36,7 @@ parser.add_argument(
     default="chargpt",
     help="Specify the model to use (gpt2 or chargpt). Default is chargpt.",
 )
+parser.add_argument("--resume", action=argparse.BooleanOptionalAction)
 args = parser.parse_args()
 
 wandb = WandbLogger(use_wandb=(jax.process_index() == 0), name=f"testing-{args.model}")
@@ -138,8 +139,11 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
 
 def main():
     model = GPT.make(jr.key(0), model_config)
-    model = eqx.tree_deserialise_leaves("checkpoint.eqx", model)
-    starting_index = 24_000
+    if args.resume:
+        model = eqx.tree_deserialise_leaves("checkpoint.eqx", model)
+        starting_index = 24_000
+    else:
+        starting_index = 0
     model_params = eqx.filter(model, eqx.is_array)
 
     class AdamWState(eqx.Module):
