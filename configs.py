@@ -19,11 +19,11 @@ class GPTConfig(eqx.Module):
                 return GPTConfig()
             case "gpt2":
                 return GPTConfig(
-                    context_len=256,
+                    context_len=1024,
                     vocab_size=50257,
-                    n_embed=384,
-                    n_layers=6,
-                    n_heads=6,
+                    n_embed=768,
+                    n_layers=12,
+                    n_heads=12,
                     dropout=0.0,
                 )
             case _:
@@ -54,16 +54,16 @@ class TrainConfig(eqx.Module):
                 return TrainConfig()
             case "gpt2":
                 return TrainConfig(
-                    batch_size=512,  # gpt2 paper - 512
-                    n_grad_accumulation=1,
+                    batch_size=256,  # gpt2 paper - 512
+                    n_grad_accumulation=2,
                     train_for=600_000,
                     weight_decay=1e-1,
                     lr_config={
-                        "init_value": 1e-4,
+                        "init_value": 6e-5,
                         "peak_value": 6e-4,
-                        "warmup_steps": 2000,
-                        "decay_steps": 50_000,
-                        "end_value": 2e-4,
+                        "warmup_steps": 1000,
+                        "decay_steps": 600_000,
+                        "end_value": 6e-5,  # chinchilla laws
                     },
                     dataset_name="openwebtext",
                 )
