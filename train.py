@@ -264,7 +264,7 @@ def main():  # noqa
             def update_velocity(v, g):
                 return self.beta2 * v + (1.0 - self.beta2) * (g**2)
 
-            lr = state.lr
+            lr = self.warmup_cosine_decay(t)
 
             def compute_update(m, v, p):
                 m_hat = m / (1.0 - self.beta1 ** ((t - self.start_t) / 2))
