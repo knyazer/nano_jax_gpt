@@ -86,6 +86,6 @@ class RunConfig(eqx.Module):
             case "chargpt":
                 return RunConfig()
             case "gpt2":
-                return RunConfig(times_to_eval=100, times_to_checkpoint=100, n_batches_in_eval=50)
+                return RunConfig(times_to_eval=1000, times_to_checkpoint=50, n_batches_in_eval=50)
             case _:
                 raise AssertionError("Only 'chargpt' or 'gpt2' are allowed as presets!")
