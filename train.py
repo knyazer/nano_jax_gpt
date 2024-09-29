@@ -292,7 +292,7 @@ def main():  # noqa
                         "solver_error_correlation": err_rel,
                         "random_p_grad_1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
                         "random_p_grad_2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
-                        "lr": state.lr,
+                        "lr": lr,
                     },
                     jnp.mod(t, 2) == 0,
                 )
@@ -301,8 +301,8 @@ def main():  # noqa
                 # otherwise decrease it by 5%
                 new_lr = jax.lax.cond(
                     err_rel > 0.2,
-                    lambda: state.lr * 1.02,
-                    lambda: state.lr * 0.98,
+                    lambda: lr * 1.02,
+                    lambda: lr * 0.98,
                 )
 
                 return mod_updates, AdamWState(
