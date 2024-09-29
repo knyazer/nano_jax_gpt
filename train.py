@@ -267,7 +267,7 @@ def main():  # noqa
                 m_hat = m / (1.0 - self.beta1 ** ((t - self.start_t) / 2))
                 v_hat = v / (1.0 - self.beta2 ** ((t - self.start_t) / 2))
                 # we assume conditioning does not change much - or fixed
-                update = -lr * m_hat * 10.0
+                update = -lr * m_hat * (1.0 - self.beta1)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
                     update -= lr * self.weight_decay * p
                 return update
