@@ -19,11 +19,11 @@ class GPTConfig(eqx.Module):
                 return GPTConfig()
             case "gpt2":
                 return GPTConfig(
-                    context_len=1024,
+                    context_len=256,
                     vocab_size=50257,
-                    n_embed=768,
-                    n_layers=12,
-                    n_heads=12,
+                    n_embed=512,
+                    n_layers=6,
+                    n_heads=6,
                     dropout=0.0,
                 )
             case _:
@@ -54,7 +54,7 @@ class TrainConfig(eqx.Module):
                 return TrainConfig()
             case "gpt2":
                 return TrainConfig(
-                    batch_size=256,  # gpt2 paper - 512
+                    batch_size=128,  # gpt2 paper - 512
                     n_grad_accumulation=1,
                     train_for=600_000,
                     weight_decay=1e-1,
