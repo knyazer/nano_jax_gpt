@@ -98,13 +98,12 @@ def step_fn(model, optim, opt_state, X, y, key):
 
     _, (loss, grads) = eqxi.scan(grad_acc_scan_fn, key, (X, y), kind="lax")
 
-    loss = jax.tree.map(lambda x: jnp.mean(x), loss, is_leaf=eqx.is_inexact_array_like)
     grads = jax.tree.map(lambda x: jnp.mean(x, axis=0), grads, is_leaf=eqx.is_inexact_array_like)
 
     updates, opt_state = optim.update(grads, opt_state, model)
     model = eqx.apply_updates(model, updates)
 
-    return model, opt_state, loss.mean()
+    return model, opt_state, loss
 
 
 evals_table = []
