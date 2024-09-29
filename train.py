@@ -48,13 +48,13 @@ run_config: RunConfig = RunConfig.from_preset(args.model)
 jax.log_compiles(True)
 
 
-def jax_log(data, cond):
+def _jax_log(data, cond):
     with jax.ensure_compile_time_eval():
         if cond:
             wandb.log(data, commit=False)
 
 
-jax_log = eqx.Partial(lambda *args: jax.debug.callback(jax_log, *args))
+jax_log = eqx.Partial(lambda *args: jax.debug.callback(_jax_log, *args))
 
 if train_config.dataset_name == "shakespear-char":
     from prepare_shakespear import decode  # type: ignore
