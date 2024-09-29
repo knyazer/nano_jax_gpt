@@ -48,9 +48,10 @@ run_config: RunConfig = RunConfig.from_preset(args.model)
 jax.log_compiles(True)
 
 
-def jax_log(data, t, cond):
-    if cond(int(t)):
-        wandb.log(data, commit=False)
+def jax_log(data, cond):
+    with jax.ensure_compile_time_eval():
+        if cond:
+            wandb.log(data, commit=False)
 
 
 if train_config.dataset_name == "shakespear-char":
@@ -242,14 +243,12 @@ def main():  # noqa
 
             jax_log(
                 {"raw_grad_norm_s1": l2(grads), "grad_scaled_norm_s1": l2(unscaled_grads)},
-                t,
-                lambda t: t % 2 == 1,
+                jnp.mod(t, 2) == 1,
             )
 
             jax_log(
                 {"raw_grad_norm_s2": l2(grads), "grad_scaled_norm_s2": l2(unscaled_grads)},
-                t,
-                lambda t: t % 2 == 0,
+                jnp.mod(t, 2) == 0,
             )
 
             def update_moment(m, g):
@@ -277,8 +276,7 @@ def main():  # noqa
 
                 jax_log(
                     jax.tree.map(lambda g, pg: g - pg, grads, state.prev_grads),
-                    t,
-                    lambda t: t % 2 == 0,
+                    jnp.mod(t, 2) == 0,
                 )
 
                 return mod_updates, AdamWState(
