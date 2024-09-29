@@ -60,10 +60,10 @@ class TrainConfig(eqx.Module):
                     weight_decay=1e-1,
                     lr_config={
                         "init_value": 6e-5,
-                        "peak_value": 2e-4,
+                        "peak_value": 8e-4,
                         "warmup_steps": 500,
-                        "decay_steps": 600_000,
-                        "end_value": 6e-5,  # chinchilla laws
+                        "decay_steps": 50_000,
+                        "end_value": 2e-4,
                     },
                     dataset_name="openwebtext",
                 )
