@@ -194,10 +194,11 @@ def main():
             return lr
 
         def update(self, grads, state, params):
+            def l2(x):
+                return jnp.sqrt(sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), x))))
+
             def clip(x, norm):
-                global_l2_norm = jnp.sqrt(
-                    sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), x)))
-                )
+                global_l2_norm = l2(x)
                 return jax.tree.map(
                     lambda g: jax.lax.cond(
                         global_l2_norm > norm,
@@ -206,14 +207,6 @@ def main():
                     ),
                     x,
                 )
-
-            def test_wandb_log(l2_grad_norm):
-                wandb.log({"grad_norm": l2_grad_norm})
-
-            l2_grad_norm = jnp.sqrt(
-                sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), grads)))
-            )
-            jax.debug.callback(test_wandb_log, l2_grad_norm)
 
             # grads also differs; grads if its an intermediate step, grads is just grads
             # otherwise it is -prev_grads * 0.5 + grads
@@ -232,6 +225,18 @@ def main():
                 ),
                 lambda: jax.tree.map(lambda g: g * 2, grads),
             )
+
+            def test_wandb_log(grad_norm, grad_scaled_norm, step):
+                if int(step) % 2 == 1:
+                    wandb.log(
+                        {"raw_grad_norm_s1": grad_norm, "grad_scaled_norm_s1": grad_scaled_norm}
+                    )
+                else:
+                    wandb.log(
+                        {"raw_grad_norm_s2": grad_norm, "grad_scaled_norm_s2": grad_scaled_norm}
+                    )
+
+            jax.debug.callback(test_wandb_log, l2(unscaled_grads), l2(grads), t)
 
             def update_moment(m, g):
                 return self.beta1 * m + (1.0 - self.beta1) * g
