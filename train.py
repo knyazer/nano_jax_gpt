@@ -45,8 +45,6 @@ model_config: GPTConfig = GPTConfig.from_preset(args.model)
 train_config: TrainConfig = TrainConfig.from_preset(args.model)
 run_config: RunConfig = RunConfig.from_preset(args.model)
 
-jax.log_compiles(True)
-
 
 def _jax_log(data, cond):
     with jax.ensure_compile_time_eval():
@@ -391,4 +389,5 @@ def main():  # noqa
 
 
 if __name__ == "__main__":
-    main()
+    with jax.log_compiles():
+        main()
