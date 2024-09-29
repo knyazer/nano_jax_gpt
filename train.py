@@ -212,6 +212,11 @@ def main():  # noqa
             def l2(x):
                 return jnp.sqrt(sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), x))))
 
+            def l1(x):
+                return sum(jax.tree_leaves(jax.tree_map(lambda g: jnp.sum(jnp.abs(g)), x))) / sum(
+                    jax.tree_leaves(jax.tree_map(lambda g: g.size, x))
+                )
+
             def clip(x, norm):
                 global_l2_norm = l2(x)
                 return jax.tree.map(
@@ -275,10 +280,17 @@ def main():  # noqa
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
 
                 err = l2(jax.tree.map(lambda g, pg: g - pg, grads, state.prev_grads))
+                err_rel = l1(
+                    jax.tree.map(
+                        lambda g, pg: jnp.abs(g - pg) / (jnp.abs(pg) + jnp.abs(g)),
+                        grads,
+                        state.prev_grads,
+                    )
+                )
                 jax_log(
                     {
                         "solver_error": err,
-                        "relative_solver_error": err / (l2(grads) + 1e-6),
+                        "relative_solver_error": err_rel,
                     },
                     jnp.mod(t, 2) == 0,
                 )
