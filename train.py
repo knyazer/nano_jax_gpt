@@ -364,7 +364,7 @@ def main():
             eval_loss = eval_fn(
                 eqx.nn.inference_mode(model), eval_generator, train_config.batch_size, sharding
             )
-        wandb.log(commit=True)
+        wandb.log({}, commit=True)
 
     checkpoint(train_config.train_for)
 
