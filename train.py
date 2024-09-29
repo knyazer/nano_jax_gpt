@@ -130,7 +130,9 @@ def eval_fn(inference_model, eval_generator, batch_size, sharding):
         out = inference_model.generate(idx=test_sample, key=jr.key(42))
         text = decode([int(x) for x in out])
         evals_table.append([text])
-    wandb.log({"text": wandb.Table(["text"], data=evals_table), "eval_loss": eval_loss})
+    wandb.log(
+        {"text": wandb.Table(["text"], data=evals_table), "eval_loss": eval_loss}, commit=False
+    )
     return eval_loss
 
 
@@ -223,17 +225,19 @@ def main():
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: g * 5, grads),
+                lambda: jax.tree.map(lambda g: g * 2, grads),
             )
 
             def test_wandb_log(grad_norm, grad_scaled_norm, step):
                 if int(step) % 2 == 1:
                     wandb.log(
-                        {"raw_grad_norm_s1": grad_norm, "grad_scaled_norm_s1": grad_scaled_norm}
+                        {"raw_grad_norm_s1": grad_norm, "grad_scaled_norm_s1": grad_scaled_norm},
+                        commit=False,
                     )
                 else:
                     wandb.log(
-                        {"raw_grad_norm_s2": grad_norm, "grad_scaled_norm_s2": grad_scaled_norm}
+                        {"raw_grad_norm_s2": grad_norm, "grad_scaled_norm_s2": grad_scaled_norm},
+                        commit=False,
                     )
 
             jax.debug.callback(test_wandb_log, l2(unscaled_grads), l2(grads), t)
@@ -345,11 +349,11 @@ def main():
         pbar.set_description(
             f"loss:{loss:.2f} / eval:{eval_loss:.2f} | step:{(time.time() - t)*1e3:.2f}ms"
         )
-        wandb.log({"step": i, "loss": loss, "loss_var": loss_var})
+        wandb.log({"step": i, "loss": loss, "loss_var": loss_var}, commit=False)
 
         # since our method is multi-step, we are interested only in the even steps
         if (i - starting_index) % 2 == 0:
-            wandb.log({"clean_loss": loss, "clean_var": loss_var})
+            wandb.log({"clean_loss": loss, "clean_var": loss_var}, commit=False)
 
         chckp_freq = train_config.train_for // run_config.times_to_checkpoint
         if i % chckp_freq == chckp_freq - 1:
@@ -360,6 +364,7 @@ def main():
             eval_loss = eval_fn(
                 eqx.nn.inference_mode(model), eval_generator, train_config.batch_size, sharding
             )
+        wandb.log(commit=True)
 
     checkpoint(train_config.train_for)
 
