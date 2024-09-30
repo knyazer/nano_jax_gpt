@@ -19,7 +19,7 @@ class WandbLogger:
         if self.use_wandb:
             if wandb.run is None:
                 wandb.init(
-                    project="ultra_optimizers",
+                    project="nano_jax_gpt",
                     settings=wandb.Settings(code_dir="."),
                     **self._kws,
                 )
