@@ -288,6 +288,8 @@ def main():  # noqa
                         "solver_error_correlation": err_rel,
                         "random_p_grad_1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
                         "random_p_grad_2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
+                        "G^2": l2(new_v),
+                        "M": l2(new_m),
                     },
                     jnp.mod(t, 2) == 0,
                 )
