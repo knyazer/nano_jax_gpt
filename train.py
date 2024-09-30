@@ -318,7 +318,7 @@ def main():  # noqa
                 new_v = jax.tree.map(update_velocity, state.v, grads)
                 updates = jax.tree.map(
                     compute_intermediate_update,
-                    0.5 * state.m * (self.beta1) / (1 - self.beta1) + grads,
+                    jax.tree.map(lambda m, g: m * (self.beta1) / (1 - self.beta1), state.m, grads),
                     new_v,
                     params,
                 )
