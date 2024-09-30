@@ -161,6 +161,7 @@ def main():  # noqa
         t: Any
         prev_grads: Any
         prev_upd: Any
+        fast_v: Any
 
     class AdamW(eqx.Module):
         lr_config: dict = eqx.field(static=True)
@@ -187,6 +188,7 @@ def main():  # noqa
                 t=jnp.array(t, dtype=jnp.int32),
                 prev_grads=jax.tree.map(jnp.zeros_like, params),
                 prev_upd=jax.tree.map(jnp.zeros_like, params),
+                fast_v=jax.tree.map(jnp.zeros_like, params),
             )
 
         def warmup_cosine_decay(self, t):
@@ -244,7 +246,7 @@ def main():  # noqa
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: g * 4, clip(grads, self.global_norm)),
+                lambda: jax.tree.map(lambda g: g, clip(grads, self.global_norm)),
             )
 
             jax_log(
@@ -295,15 +297,32 @@ def main():  # noqa
                 )
 
                 return mod_updates, AdamWState(
-                    m=new_m, v=new_v, t=t, prev_grads=unscaled_grads, prev_upd=updates
+                    m=new_m,
+                    v=new_v,
+                    t=t,
+                    prev_grads=unscaled_grads,
+                    prev_upd=updates,
+                    fast_v=state.fast_v,
                 )
+
+            def compute_intermediate_update(g, v, p):
+                v_hat = v / (1.0 - self.beta2 ** ((t - self.start_t) / 2))
+                update = -lr * g * (1 / (1 - self.beta1)) / (jnp.sqrt(v_hat) + self.epsilon)
+                if eqx.is_inexact_array(p) and p.ndim >= 2:
+                    update -= lr * self.weight_decay * p
+                return update
 
             def heuns_update():
                 # heuns update, we don't update any opt state here, only the update store
-                new_v = jax.tree.map(update_velocity, state.v, unscaled_grads)
-                updates = jax.tree.map(compute_update, new_m, new_v, params)
+                new_v = jax.tree.map(update_velocity, state.fast_v, unscaled_grads)
+                updates = jax.tree.map(compute_intermediate_update, new_m, new_v, params)
                 return updates, AdamWState(
-                    m=state.m, v=state.v, t=t, prev_grads=unscaled_grads, prev_upd=updates
+                    m=state.m,
+                    v=state.v,
+                    t=t,
+                    prev_grads=unscaled_grads,
+                    prev_upd=updates,
+                    fast_v=new_v,
                 )
 
             return jax.lax.cond(jnp.mod(t, 2) == 0, application_update, heuns_update)
