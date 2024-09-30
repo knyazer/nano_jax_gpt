@@ -307,7 +307,7 @@ def main():  # noqa
 
             def compute_intermediate_update(g, v, p):
                 v_hat = v / (1.0 - self.beta2 ** ((t - self.start_t) / 2))
-                update = -lr * g * (1 / (1 - self.beta1)) / (jnp.sqrt(v_hat) + self.epsilon)
+                update = -lr * g / (jnp.sqrt(v_hat) + self.epsilon)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
                     update -= lr * self.weight_decay * p
                 return update
