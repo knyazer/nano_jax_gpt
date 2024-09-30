@@ -306,9 +306,9 @@ def main():  # noqa
                     fast_v=state.fast_v,
                 )
 
-            def compute_intermediate_update(g, v, p):
+            def compute_intermediate_update(m, v, p):
                 v_hat = v / (1.0 - self.beta2 ** (t - self.start_t))
-                update = -lr * g / (jnp.sqrt(v_hat) + self.epsilon)
+                update = -lr * m / (jnp.sqrt(v_hat) + self.epsilon)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
                     update -= lr * self.weight_decay * p
                 return update
@@ -316,7 +316,7 @@ def main():  # noqa
             def heuns_update():
                 # heuns update, we don't update any opt state here, only the update store
                 new_v = jax.tree.map(update_velocity, state.fast_v, unscaled_grads)
-                updates = jax.tree.map(compute_intermediate_update, new_m, new_v, params)
+                updates = jax.tree.map(compute_intermediate_update, grads, new_v, params)
                 return updates, AdamWState(
                     m=state.m,
                     v=state.v,
