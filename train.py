@@ -242,12 +242,13 @@ def main():  # noqa
             grads = jax.lax.cond(
                 jnp.mod(t, 2) == 0,
                 lambda: jax.tree.map(
-                    lambda g, pg: clip(g * 0.5 + pg * 0.5, self.global_norm),
+                    lambda g, pg: g * 0.5 + pg * 0.5,
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: clip(g * 9.0, self.global_norm), grads),
+                lambda: jax.tree.map(lambda g: g * 9.0, grads),
             )
+            grads = clip(grads, self.global_norm)
 
             jax_log(
                 {"raw_grad_norm_s1": l2(grads), "grad_scaled_norm_s1": l2(unscaled_grads)},
