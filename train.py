@@ -244,7 +244,7 @@ def main():  # noqa
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: g * 2, clip(grads, self.global_norm)),
+                lambda: jax.tree.map(lambda g: g * 4, clip(grads, self.global_norm)),
             )
 
             jax_log(
