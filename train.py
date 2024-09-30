@@ -263,7 +263,7 @@ def main():  # noqa
             def update_velocity(v, g):
                 return self.beta2 * v + (1.0 - self.beta2) * (g**2)
 
-            def compute_update(m, v, p, *, full=False):
+            def compute_update(m, v, p):
                 m_hat = m / (1.0 - self.beta1 ** ((t - self.start_t) / 2))
                 v_hat = v / (1.0 - self.beta2 ** ((t - self.start_t) / 2))
                 # we assume conditioning does not change much - or fixed
@@ -301,7 +301,7 @@ def main():  # noqa
             def heuns_update():
                 # heuns update, we don't update any opt state here, only the update store
                 new_v = jax.tree.map(update_velocity, state.v, unscaled_grads)
-                updates = jax.tree.map(eqx.Partial(compute_update, full=True), new_m, new_v, params)
+                updates = jax.tree.map(compute_update, new_m, new_v, params)
                 return updates, AdamWState(
                     m=state.m, v=state.v, t=t, prev_grads=unscaled_grads, prev_upd=updates
                 )
