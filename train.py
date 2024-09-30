@@ -175,8 +175,8 @@ def main():  # noqa
             self.lr_config = lr_config
             self.weight_decay = weight_decay
             self.global_norm = global_norm
-            self.beta1 = 0.9
-            self.beta2 = 0.999
+            self.beta1 = 0.8
+            self.beta2 = 0.99
             self.epsilon = 1e-8
             self.start_t = t
 
