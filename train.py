@@ -161,7 +161,6 @@ def main():  # noqa
         t: Any
         prev_grads: Any
         prev_upd: Any
-        fast_v: Any
 
     class AdamW(eqx.Module):
         lr_config: dict = eqx.field(static=True)
@@ -188,7 +187,6 @@ def main():  # noqa
                 t=jnp.array(t, dtype=jnp.int32),
                 prev_grads=jax.tree.map(jnp.zeros_like, params),
                 prev_upd=jax.tree.map(jnp.zeros_like, params),
-                fast_v=jax.tree.map(jnp.zeros_like, params),
             )
 
         def warmup_cosine_decay(self, t):
@@ -246,7 +244,7 @@ def main():  # noqa
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: g, grads),
+                lambda: jax.tree.map(lambda g: g * 2.0, grads),
             )
             grads = clip(grads, self.global_norm)
 
@@ -303,22 +301,14 @@ def main():  # noqa
                     t=t,
                     prev_grads=unscaled_grads,
                     prev_upd=updates,
-                    fast_v=state.fast_v,
                 )
-
-            def compute_intermediate_update(m, v, p):
-                v_hat = v / (1.0 - self.beta2 ** (t - self.start_t))
-                update = -lr * m / (jnp.sqrt(v_hat) + self.epsilon)
-                if eqx.is_inexact_array(p) and p.ndim >= 2:
-                    update -= lr * self.weight_decay * p
-                return update
 
             def heuns_update():
                 # heuns update, we don't update any opt state here, only the update store
-                new_v = jax.tree.map(update_velocity, state.v, grads)
+                new_v = jax.tree.map(update_velocity, state.v, unscaled_grads)
                 updates = jax.tree.map(
-                    compute_intermediate_update,
-                    jax.tree.map(lambda m, g: m * (self.beta1) / (1 - self.beta1), state.m, grads),
+                    compute_update,
+                    new_m,
                     new_v,
                     params,
                 )
@@ -328,7 +318,6 @@ def main():  # noqa
                     t=t,
                     prev_grads=unscaled_grads,
                     prev_upd=updates,
-                    fast_v=new_v,
                 )
 
             return jax.lax.cond(jnp.mod(t, 2) == 0, application_update, heuns_update)
@@ -397,7 +386,8 @@ def main():  # noqa
 
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
         model, opt_state, loss = step_fn(model, optim, opt_state, X, y, fwd_key)
-        X, y = load_train_batches()
+        if i % 2 == 1:
+            X, y = load_train_batches()
         loss_var = jnp.log(loss.std() + 1e-13)
         loss = float(loss.mean())
 
