@@ -398,15 +398,15 @@ def main():  # noqa
         wandb.log({"step": i, "loss": loss, "loss_var": loss_var}, commit=False)
 
         # since our method is multi-step, we are interested only in the even steps
-        if (i - starting_index) % 2 == 0:
+        if (i - starting_index) % 2 == 1:
             wandb.log({"clean_loss": loss, "clean_var": loss_var}, commit=False)
 
         chckp_freq = train_config.train_for // run_config.times_to_checkpoint
-        if i % chckp_freq == chckp_freq - 1:
+        if i % chckp_freq >= chckp_freq - 2 and i % 2 == 1:
             checkpoint(i)
 
         eval_freq = train_config.train_for // run_config.times_to_eval
-        if i % eval_freq == eval_freq - 1:
+        if i % eval_freq >= eval_freq - 2 and i % 2 == 1:
             eval_loss = eval_fn(
                 eqx.nn.inference_mode(model), eval_generator, train_config.batch_size, sharding
             )
