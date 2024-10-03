@@ -236,7 +236,6 @@ def main():  # noqa
             t = state.t + 1
             lr = self.warmup_cosine_decay(t)
 
-            k = jnp.clip(t.astype(jnp.float32) / 1_000.0 - 1.0, 1.0, 4.0)
             unscaled_grads = grads
             grads = jax.lax.cond(
                 jnp.mod(t, 2) == 0,
@@ -245,7 +244,7 @@ def main():  # noqa
                     grads,
                     state.prev_grads,
                 ),
-                lambda: jax.tree.map(lambda g: g * k.astype(g.dtype), grads),
+                lambda: jax.tree.map(lambda g: g * 5.0, grads),
             )
             grads = clip(grads, self.global_norm)
 
