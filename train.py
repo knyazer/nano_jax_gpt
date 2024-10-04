@@ -400,6 +400,8 @@ def main():  # noqa
         # since our method is multi-step, we are interested only in the even steps
         if stage == 1:  # end stage - log the loss as clean
             wandb.log({"clean_loss": loss, "clean_var": loss_var}, commit=False)
+        else:
+            wandb.log({"dirty_loss": loss, "dirty_var": loss_var}, commit=False)
 
         chckp_freq = train_config.train_for // run_config.times_to_checkpoint
         if i % chckp_freq >= chckp_freq - 2 and stage == 1:
