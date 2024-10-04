@@ -244,7 +244,7 @@ def main():  # noqa
                     clip(grads, self.global_norm),
                     clip(state.prev_grads, self.global_norm),
                 ),
-                lambda: jax.tree.map(lambda g: g / (1.0 - self.beta1), grads),
+                lambda: jax.tree.map(lambda g: g * 2.0, grads),
             )
             grads = clip(grads, self.global_norm * 2)
 
@@ -389,8 +389,7 @@ def main():  # noqa
         model, opt_state, loss = step_fn(
             model, optim, opt_state, jnp.array(stage, dtype=jnp.int32), X, y, fwd_key
         )
-        if stage == 1:  # end stage - reload batches, good update applied
-            X, y = load_train_batches()
+        X, y = load_train_batches()
         loss_var = jnp.log(loss.std() + 1e-13)
         loss = float(loss.mean())
 
