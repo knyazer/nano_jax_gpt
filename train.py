@@ -311,8 +311,8 @@ def main():  # noqa
                     stage == 2,
                 )
 
-                new_m = jax.lax.cond(stage == len(stages) - 1, lambda: state.m, lambda: new_m)
-                new_v = jax.lax.cond(stage == len(stages) - 1, lambda: state.v, lambda: new_v)
+                new_m = jax.lax.cond(stage == len(stages) - 1, lambda: new_m, lambda: state.m)
+                new_v = jax.lax.cond(stage == len(stages) - 1, lambda: new_v, lambda: state.v)
 
                 return mod_updates, AdamWState(
                     m=new_m,
