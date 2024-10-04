@@ -208,7 +208,7 @@ def main():  # noqa
             lr = jax.lax.cond(t < warmup_steps + self.start_t, warmup, decay, t)
             return lr
 
-        def update(self, grads, state, params, stage=None):
+        def update(self, unscaled_grads, state, params, stage=None):
             def l2(x):
                 return jnp.sqrt(sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), x))))
 
@@ -229,35 +229,6 @@ def main():  # noqa
                     x,
                 )
 
-            # grads also differs; grads if its an intermediate step, grads is just grads
-            # otherwise it is -prev_grads * 0.5 + grads
-            # and update is just -old_update + new_update
-
-            t = state.t + 1
-            lr = self.warmup_cosine_decay(t)
-
-            unscaled_grads = grads
-            grads = jax.lax.cond(
-                stage == 1,
-                lambda: jax.tree.map(
-                    lambda g, pg: g * 0.5 + pg * 0.5,
-                    clip(grads, self.global_norm),
-                    clip(state.prev_grads, self.global_norm),
-                ),
-                lambda: jax.tree.map(lambda g: g * 2.0, grads),
-            )
-            grads = clip(grads, self.global_norm * 2)
-
-            jax_log(
-                {"raw_grad_norm_s0": l2(grads), "grad_scaled_norm_s0": l2(unscaled_grads)},
-                stage == 0,
-            )
-
-            jax_log(
-                {"raw_grad_norm_s1": l2(grads), "grad_scaled_norm_s1": l2(unscaled_grads)},
-                stage == 1,
-            )
-
             def update_moment(m, g):
                 return self.beta1 * m + (1.0 - self.beta1) * g
 
@@ -267,44 +238,24 @@ def main():  # noqa
             def compute_update(m, v, p):
                 m_hat = m / (1.0 - self.beta1 ** (t - self.start_t))
                 v_hat = v / (1.0 - self.beta2 ** (t - self.start_t))
-                # we assume conditioning does not change much - or fixed
                 update = -lr * m_hat / (jnp.sqrt(v_hat) + self.epsilon)
                 if eqx.is_inexact_array(p) and p.ndim >= 2:
                     update -= lr * self.weight_decay * p
                 return update
 
-            new_m = jax.tree.map(update_moment, state.m, grads)
+            t = state.t + 1
+            lr = self.warmup_cosine_decay(t)
 
-            def application_update():
-                new_v = jax.tree.map(update_velocity, state.v, grads)
-                updates = jax.tree.map(compute_update, new_m, new_v, params)
-                # updates are just the new updates - old_updates
-                mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
+            def stage0():
+                grads = jax.tree.map(lambda g: g * 2.0, unscaled_grads)
+                grads = clip(grads, self.global_norm * 2)
 
-                err = l2(jax.tree.map(lambda g, pg: g - pg, grads, state.prev_grads))
-                err_rel = corr(grads, state.prev_grads)  # 1 is linear fn, 0 is noise, -1 opposite
                 jax_log(
-                    {
-                        "solver_error": err,
-                        "solver_error_correlation": err_rel,
-                        "random_p_grad_1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
-                        "random_p_grad_2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
-                        "G^2": l2(new_v),
-                        "M": l2(new_m),
-                    },
-                    stage == 1,
+                    {"stage0:norm": l2(grads), "stage0:norm-unscaled": l2(unscaled_grads)},
+                    stage == 0,
                 )
 
-                return mod_updates, AdamWState(
-                    m=new_m,
-                    v=new_v,
-                    t=t,
-                    prev_grads=unscaled_grads,
-                    prev_upd=updates,
-                )
-
-            def heuns_update():
-                # heuns update, we don't update any opt state here, only the update store
+                new_m = jax.tree.map(update_moment, state.m, grads)
                 new_v = jax.tree.map(update_velocity, state.v, unscaled_grads)
                 updates = jax.tree.map(
                     compute_update,
@@ -320,7 +271,56 @@ def main():  # noqa
                     prev_upd=updates,
                 )
 
-            return jax.lax.cond(stage == 1, application_update, heuns_update)
+            def stage1():
+                grads = jax.tree.map(
+                    lambda g, pg: g * 0.5 + pg * 0.5,
+                    clip(unscaled_grads, self.global_norm),
+                    clip(state.prev_grads, self.global_norm),
+                )
+                grads = clip(grads, self.global_norm * 2)
+
+                new_m = jax.tree.map(update_moment, state.m, grads)
+                new_v = jax.tree.map(update_velocity, state.v, grads)
+                updates = jax.tree.map(compute_update, new_m, new_v, params)
+                mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
+
+                err = l2(jax.tree.map(lambda g, pg: g - pg, grads, state.prev_grads))
+                err_rel = corr(grads, state.prev_grads)
+                jax_log(
+                    {
+                        "stage1:solver_error": err,
+                        "stage1:solver_error_correlation": err_rel,
+                        "random_p_grad_1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
+                        "random_p_grad_2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
+                        "G^2": l2(new_v),
+                        "M": l2(new_m),
+                        "stage1:norm": l2(grads),
+                        "stage1:norm-unscaled": l2(unscaled_grads),
+                    },
+                    stage == 1,
+                )
+                jax_log(
+                    {
+                        "stage2:solver_error": err,
+                        "stage2:solver_error_correlation": err_rel,
+                        "stage2:norm": l2(grads),
+                        "stage2:norm-unscaled": l2(unscaled_grads),
+                    },
+                    stage == 2,
+                )
+
+                new_m = jax.lax.cond(stage == 1, lambda: state.m, lambda: new_m)
+                new_v = jax.lax.cond(stage == 1, lambda: state.v, lambda: new_v)
+
+                return mod_updates, AdamWState(
+                    m=new_m,
+                    v=new_v,
+                    t=t,
+                    prev_grads=grads,
+                    prev_upd=updates,
+                )
+
+            return jax.lax.switch(stage, [stage0, stage1, stage1])
 
     optim = AdamW(
         lr_config=train_config.lr_config,
@@ -397,16 +397,17 @@ def main():  # noqa
             f"loss:{loss:.2f} / eval:{eval_loss:.2f} | step:{(time.time() - t)*1e3:.2f}ms"
         )
 
-        # since our method is multi-step, we are interested only in the even steps
-        if stage == 1:
-            wandb.log({"loss": loss, "loss_var": loss_var}, commit=False)
+        if stage == 0:
+            wandb.log(
+                {f"stage{stage}:loss": loss, f"stage{stage}:loss_var": loss_var}, commit=False
+            )
 
         chckp_freq = train_config.train_for // run_config.times_to_checkpoint
-        if i % chckp_freq >= chckp_freq - 2 and stage == 1:
+        if i % chckp_freq >= chckp_freq - 2 and stage == 0:
             checkpoint(i)
 
         eval_freq = train_config.train_for // run_config.times_to_eval
-        if i % eval_freq >= eval_freq - 2 and stage == 1:
+        if i % eval_freq >= eval_freq - 2 and stage == 0:
             eval_loss = eval_fn(
                 eqx.nn.inference_mode(model), eval_generator, train_config.batch_size // 2, sharding
             )
