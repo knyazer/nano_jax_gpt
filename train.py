@@ -386,7 +386,9 @@ def main():  # noqa
         t = time.time()
 
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
-        model, opt_state, loss = step_fn(model, optim, opt_state, stage, X, y, fwd_key)
+        model, opt_state, loss = step_fn(
+            model, optim, opt_state, jnp.array(stage, dtype=jnp.int32), X, y, fwd_key
+        )
         if stage == 1:  # end stage - reload batches, good update applied
             X, y = load_train_batches()
         loss_var = jnp.log(loss.std() + 1e-13)
