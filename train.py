@@ -241,12 +241,12 @@ def main():  # noqa
                 stage == 1,
                 lambda: jax.tree.map(
                     lambda g, pg: g * 0.5 + pg * 0.5,
-                    grads,
-                    state.prev_grads,
+                    clip(grads, self.global_norm),
+                    clip(state.prev_grads, self.global_norm),
                 ),
-                lambda: jax.tree.map(lambda g: g * 1.0, grads),
+                lambda: jax.tree.map(lambda g: g / (1.0 - self.beta1), grads),
             )
-            grads = clip(grads, self.global_norm)
+            grads = clip(grads, self.global_norm * 2)
 
             jax_log(
                 {"raw_grad_norm_s0": l2(grads), "grad_scaled_norm_s0": l2(unscaled_grads)},
@@ -397,20 +397,17 @@ def main():  # noqa
         pbar.set_description(
             f"loss:{loss:.2f} / eval:{eval_loss:.2f} | step:{(time.time() - t)*1e3:.2f}ms"
         )
-        wandb.log({"step": i, "loss": loss, "loss_var": loss_var}, commit=False)
 
         # since our method is multi-step, we are interested only in the even steps
-        if stage == 1:  # end stage - log the loss as clean
-            wandb.log({"clean_loss": loss, "clean_var": loss_var}, commit=False)
-        else:
-            wandb.log({"dirty_loss": loss, "dirty_var": loss_var}, commit=False)
+        if stage == 1:
+            wandb.log({"loss": loss, "loss_var": loss_var}, commit=False)
 
         chckp_freq = train_config.train_for // run_config.times_to_checkpoint
         if i % chckp_freq >= chckp_freq - 2 and stage == 1:
             checkpoint(i)
 
         eval_freq = train_config.train_for // run_config.times_to_eval
-        if i % eval_freq >= eval_freq - 2:
+        if i % eval_freq >= eval_freq - 2 and stage == 1:
             eval_loss = eval_fn(
                 eqx.nn.inference_mode(model), eval_generator, train_config.batch_size // 2, sharding
             )
