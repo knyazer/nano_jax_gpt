@@ -322,7 +322,7 @@ def main():  # noqa
                     prev_upd=updates,
                 )
 
-            stages = [stage0, stage1]
+            stages = [stage0, stage1, stage1]
             return jax.lax.switch(stage, stages)
 
     optim = AdamW(
@@ -383,7 +383,7 @@ def main():  # noqa
     skip_train_batches(starting_index)
     X, y = load_train_batches()
     for i in (pbar := tqdm(range(starting_index, train_config.train_for))):
-        stage = i % 2
+        stage = i % 3
         data_key, fwd_key = jr.split(jr.key(i))
 
         t = time.time()
