@@ -290,8 +290,8 @@ def main():  # noqa
                     {
                         "stage1:solver_error": err,
                         "stage1:solver_error_correlation": err_rel,
-                        "random_p_grad_1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
-                        "random_p_grad_2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
+                        "stage1:rpg1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
+                        "stage1:rpg2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
                         "G^2": l2(new_v),
                         "M": l2(new_m),
                         "stage1:norm": l2(grads),
@@ -303,14 +303,16 @@ def main():  # noqa
                     {
                         "stage2:solver_error": err,
                         "stage2:solver_error_correlation": err_rel,
+                        "stage2:rpg1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
+                        "stage2:rpg2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
                         "stage2:norm": l2(grads),
                         "stage2:norm-unscaled": l2(unscaled_grads),
                     },
                     stage == 2,
                 )
 
-                new_m = jax.lax.cond(stage == 1, lambda: state.m, lambda: new_m)
-                new_v = jax.lax.cond(stage == 1, lambda: state.v, lambda: new_v)
+                new_m = jax.lax.cond(stage == len(stages) - 1, lambda: state.m, lambda: new_m)
+                new_v = jax.lax.cond(stage == len(stages) - 1, lambda: state.v, lambda: new_v)
 
                 return mod_updates, AdamWState(
                     m=new_m,
@@ -320,7 +322,8 @@ def main():  # noqa
                     prev_upd=updates,
                 )
 
-            return jax.lax.switch(stage, [stage0, stage1, stage1])
+            stages = [stage0, stage1]
+            return jax.lax.switch(stage, stages)
 
     optim = AdamW(
         lr_config=train_config.lr_config,
