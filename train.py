@@ -99,7 +99,7 @@ def loss_fn(
 
 
 @eqx.filter_jit(donate="all")
-def step_fn(model, optim, opt_state, X, y, key):
+def step_fn(model, optim, opt_state, stage, X, y, key):
     def grad_acc_scan_fn(key: PRNGKeyArray, data: tuple):
         loss, grads = eqx.filter_value_and_grad(loss_fn)(
             model, *data, key=jr.split(key, data[0].shape[:-1])
@@ -110,7 +110,7 @@ def step_fn(model, optim, opt_state, X, y, key):
 
     grads = jax.tree.map(lambda x: jnp.mean(x, axis=0), grads, is_leaf=eqx.is_inexact_array_like)
 
-    updates, opt_state = optim.update(grads, opt_state, model)
+    updates, opt_state = optim.update(grads, opt_state, model, stage=stage)
     model = eqx.apply_updates(model, updates)
 
     return model, opt_state, loss.astype(jnp.float32)
@@ -208,7 +208,7 @@ def main():  # noqa
             lr = jax.lax.cond(t < warmup_steps + self.start_t, warmup, decay, t)
             return lr
 
-        def update(self, grads, state, params):
+        def update(self, grads, state, params, stage=None):
             def l2(x):
                 return jnp.sqrt(sum(jax.tree.leaves(jax.tree.map(lambda g: jnp.sum(g**2), x))))
 
@@ -238,7 +238,7 @@ def main():  # noqa
 
             unscaled_grads = grads
             grads = jax.lax.cond(
-                jnp.mod(t, 2) == 0,
+                stage == 1,
                 lambda: jax.tree.map(
                     lambda g, pg: g * 0.5 + pg * 0.5,
                     grads,
@@ -249,13 +249,13 @@ def main():  # noqa
             grads = clip(grads, self.global_norm)
 
             jax_log(
-                {"raw_grad_norm_s1": l2(grads), "grad_scaled_norm_s1": l2(unscaled_grads)},
-                jnp.mod(t, 2) == 1,
+                {"raw_grad_norm_s0": l2(grads), "grad_scaled_norm_s0": l2(unscaled_grads)},
+                stage == 0,
             )
 
             jax_log(
-                {"raw_grad_norm_s2": l2(grads), "grad_scaled_norm_s2": l2(unscaled_grads)},
-                jnp.mod(t, 2) == 0,
+                {"raw_grad_norm_s1": l2(grads), "grad_scaled_norm_s1": l2(unscaled_grads)},
+                stage == 1,
             )
 
             def update_moment(m, g):
@@ -292,7 +292,7 @@ def main():  # noqa
                         "G^2": l2(new_v),
                         "M": l2(new_m),
                     },
-                    jnp.mod(t, 2) == 0,
+                    stage == 1,
                 )
 
                 return mod_updates, AdamWState(
@@ -320,7 +320,7 @@ def main():  # noqa
                     prev_upd=updates,
                 )
 
-            return jax.lax.cond(jnp.mod(t, 2) == 0, application_update, heuns_update)
+            return jax.lax.cond(stage == 1, application_update, heuns_update)
 
     optim = AdamW(
         lr_config=train_config.lr_config,
@@ -380,13 +380,14 @@ def main():  # noqa
     skip_train_batches(starting_index)
     X, y = load_train_batches()
     for i in (pbar := tqdm(range(starting_index, train_config.train_for))):
+        stage = i % 2
         data_key, fwd_key = jr.split(jr.key(i))
 
         t = time.time()
 
         X, y = eqx.filter_shard((jnp.array(X), jnp.array(y)), sharding)
-        model, opt_state, loss = step_fn(model, optim, opt_state, X, y, fwd_key)
-        if i % 2 == 1:
+        model, opt_state, loss = step_fn(model, optim, opt_state, stage, X, y, fwd_key)
+        if stage == 1:  # end stage - reload batches, good update applied
             X, y = load_train_batches()
         loss_var = jnp.log(loss.std() + 1e-13)
         loss = float(loss.mean())
@@ -397,17 +398,17 @@ def main():  # noqa
         wandb.log({"step": i, "loss": loss, "loss_var": loss_var}, commit=False)
 
         # since our method is multi-step, we are interested only in the even steps
-        if (i - starting_index) % 2 == 1:
+        if stage == 1:  # end stage - log the loss as clean
             wandb.log({"clean_loss": loss, "clean_var": loss_var}, commit=False)
 
         chckp_freq = train_config.train_for // run_config.times_to_checkpoint
-        if i % chckp_freq >= chckp_freq - 2 and i % 2 == 1:
+        if i % chckp_freq >= chckp_freq - 2 and stage == 1:
             checkpoint(i)
 
         eval_freq = train_config.train_for // run_config.times_to_eval
-        if i % eval_freq >= eval_freq - 2 and i % 2 == 1:
+        if i % eval_freq >= eval_freq - 2:
             eval_loss = eval_fn(
-                eqx.nn.inference_mode(model), eval_generator, train_config.batch_size, sharding
+                eqx.nn.inference_mode(model), eval_generator, train_config.batch_size // 2, sharding
             )
         wandb.log({}, commit=True)
 
