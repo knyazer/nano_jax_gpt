@@ -247,7 +247,7 @@ def main():  # noqa
             lr = self.warmup_cosine_decay(t)
 
             def stage0():
-                grads = jax.tree.map(lambda g: g * 2.0, unscaled_grads)
+                grads = jax.tree.map(lambda g: g * 1.0, unscaled_grads)
                 grads = clip(grads, self.global_norm * 2)
 
                 jax_log(
@@ -383,7 +383,8 @@ def main():  # noqa
     skip_train_batches(starting_index)
     X, y = load_train_batches()
     for i in (pbar := tqdm(range(starting_index, train_config.train_for))):
-        stage = i % 3
+        n_stages = 3
+        stage = i % n_stages
         data_key, fwd_key = jr.split(jr.key(i))
 
         t = time.time()
@@ -400,17 +401,14 @@ def main():  # noqa
             f"loss:{loss:.2f} / eval:{eval_loss:.2f} | step:{(time.time() - t)*1e3:.2f}ms"
         )
 
-        if stage == 0:
-            wandb.log(
-                {f"stage{stage}:loss": loss, f"stage{stage}:loss_var": loss_var}, commit=False
-            )
+        wandb.log({f"stage{stage}:loss": loss, f"stage{stage}:loss_var": loss_var}, commit=False)
 
         chckp_freq = train_config.train_for // run_config.times_to_checkpoint
-        if i % chckp_freq >= chckp_freq - 2 and stage == 0:
+        if i % chckp_freq >= chckp_freq - n_stages and stage == n_stages - 1:
             checkpoint(i)
 
         eval_freq = train_config.train_for // run_config.times_to_eval
-        if i % eval_freq >= eval_freq - 2 and stage == 0:
+        if i % eval_freq >= eval_freq - n_stages and stage == n_stages - 1:
             eval_loss = eval_fn(
                 eqx.nn.inference_mode(model), eval_generator, train_config.batch_size // 2, sharding
             )
