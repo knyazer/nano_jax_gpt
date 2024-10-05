@@ -247,7 +247,7 @@ def main():  # noqa
             lr = self.warmup_cosine_decay(t)
 
             def stage0():
-                grads = jax.tree.map(lambda g: g * 1.0, unscaled_grads)
+                grads = jax.tree.map(lambda g: g * 4.0, unscaled_grads)
                 grads = clip(grads, self.global_norm * 2)
 
                 jax_log(
@@ -322,7 +322,7 @@ def main():  # noqa
                     prev_upd=updates,
                 )
 
-            stages = [stage0, stage1, stage1]
+            stages = [stage0, stage1]
             return jax.lax.switch(stage, stages)
 
     optim = AdamW(
@@ -383,7 +383,7 @@ def main():  # noqa
     skip_train_batches(starting_index)
     X, y = load_train_batches()
     for i in (pbar := tqdm(range(starting_index, train_config.train_for))):
-        n_stages = 3
+        n_stages = 2
         stage = i % n_stages
         data_key, fwd_key = jr.split(jr.key(i))
 
