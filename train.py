@@ -247,7 +247,7 @@ def main():  # noqa
             lr = self.warmup_cosine_decay(t)
 
             def stage0():
-                grads = jax.tree.map(lambda g: g * 4.0, unscaled_grads)
+                grads = jax.tree.map(lambda g: g * 1.5, unscaled_grads)
                 grads = clip(grads, self.global_norm * 2)
 
                 jax_log(
