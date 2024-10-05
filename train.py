@@ -410,7 +410,7 @@ def main():  # noqa
         eval_freq = train_config.train_for // run_config.times_to_eval
         if i % eval_freq >= eval_freq - n_stages and stage == n_stages - 1:
             eval_loss = eval_fn(
-                eqx.nn.inference_mode(model), eval_generator, train_config.batch_size // 2, sharding
+                eqx.nn.inference_mode(model), eval_generator, train_config.batch_size, sharding
             )
         wandb.log({}, commit=True)
 
