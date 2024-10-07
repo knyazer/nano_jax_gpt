@@ -251,7 +251,11 @@ def main():  # noqa
                 grads = clip(grads, self.global_norm * 2)
 
                 jax_log(
-                    {"stage0:norm": l2(grads), "stage0:norm-unscaled": l2(unscaled_grads)},
+                    {
+                        "stage0:norm": l2(grads),
+                        "stage0:norm-unscaled": l2(unscaled_grads),
+                        "lr": lr,
+                    },
                     stage == 0,
                 )
 
