@@ -247,7 +247,7 @@ def main():  # noqa
             lr = self.warmup_cosine_decay(t)
 
             def stage0():
-                grads = jax.tree.map(lambda g: g * 1.5, unscaled_grads)
+                grads = jax.tree.map(lambda g: g * 2.5, unscaled_grads)
                 grads = clip(grads, self.global_norm * 2)
 
                 jax_log(
@@ -285,11 +285,13 @@ def main():  # noqa
                 mod_updates = jax.tree.map(lambda x, y: x - y, updates, state.prev_upd)
 
                 err = l2(jax.tree.map(lambda g, pg: g - pg, grads, state.prev_grads))
-                err_rel = corr(grads, state.prev_grads)
+                errd = l2(jax.tree.map(lambda g, pg: g - pg, unscaled_grads, state.prev_grads))
                 jax_log(
                     {
                         "stage1:solver_error": err,
-                        "stage1:solver_error_correlation": err_rel,
+                        "stage1:solver_error_direct": errd,
+                        "stage1:solver_error_correlation": corr(grads, state.prev_grads),
+                        "stage1:solver_correlation_direct": corr(unscaled_grads, state.prev_grads),
                         "stage1:rpg1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
                         "stage1:rpg2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
                         "G^2": l2(new_v),
@@ -298,17 +300,6 @@ def main():  # noqa
                         "stage1:norm-unscaled": l2(unscaled_grads),
                     },
                     stage == 1,
-                )
-                jax_log(
-                    {
-                        "stage2:solver_error": err,
-                        "stage2:solver_error_correlation": err_rel,
-                        "stage2:rpg1": state.prev_grads.blocks[3].proj_fc.weight.ravel()[157],
-                        "stage2:rpg2": unscaled_grads.blocks[3].proj_fc.weight.ravel()[157],
-                        "stage2:norm": l2(grads),
-                        "stage2:norm-unscaled": l2(unscaled_grads),
-                    },
-                    stage == 2,
                 )
 
                 new_m = jax.lax.cond(stage == len(stages) - 1, lambda: new_m, lambda: state.m)
