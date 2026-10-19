@@ -164,7 +164,7 @@ def main():
     n_model_params = jax.tree.map(lambda x: x.size, model_params)
     n_model_params = sum(jax.tree.leaves(n_model_params))
 
-    print(f"Model has {n_model_params/1_000_000:.2f}M parameters")
+    print(f"Model has {n_model_params / 1_000_000:.2f}M parameters")
     opt_state = optim.init(model_params)
     eval_loss = float(jnp.nan)
 
@@ -208,7 +208,7 @@ def main():
 
         # log
         pbar.set_description(
-            f"loss:{loss:.2f} / eval:{eval_loss:.2f} | step:{(time.time() - t)*1e3:.2f}ms"
+            f"loss:{loss:.2f} / eval:{eval_loss:.2f} | step:{(time.time() - t) * 1e3:.2f}ms"
         )
         wandb.log({"loss": loss})
 
