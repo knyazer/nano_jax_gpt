@@ -112,12 +112,12 @@ def gpt_from_pretrained():
         new_st_model,
         is_leaf=lambda leaf: type(leaf) in [int, float, tuple, bool],
     )
-    assert all(
-        jax.tree.leaves(shapes)
-    ), "Inconsistent shapes between the loaded and original models!"
-    assert all(
-        jax.tree.leaves(values)
-    ), "Different static values between the loaded and original models!"
+    assert all(jax.tree.leaves(shapes)), (
+        "Inconsistent shapes between the loaded and original models!"
+    )
+    assert all(jax.tree.leaves(values)), (
+        "Different static values between the loaded and original models!"
+    )
 
     return model
 
