@@ -123,9 +123,9 @@ class GPT(eqx.Module):
             ctx_len = self.config.context_len
             input_len = idx.shape[0]
 
-            assert (
-                targets is None or targets.shape[0] == input_len
-            ), "Input & target lengths must match"
+            assert targets is None or targets.shape[0] == input_len, (
+                "Input & target lengths must match"
+            )
 
             if input_len < ctx_len:  # pad with nans if too short
                 idx_padded = jnp.pad(idx, (0, ctx_len - input_len))
